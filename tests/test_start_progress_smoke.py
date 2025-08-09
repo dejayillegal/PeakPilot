@@ -1,6 +1,6 @@
 import time
 
-def test_start_and_progress(client, sine_file):
+def test_start_progress_smoke(client, sine_file):
     with open(sine_file, 'rb') as f:
         data = {'audio': (f, 'test.wav')}
         r = client.post('/start', data=data, content_type='multipart/form-data')
