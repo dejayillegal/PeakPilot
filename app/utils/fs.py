@@ -1,12 +1,22 @@
 import json
 import os
+import tempfile
 import uuid
 from pathlib import Path
 from typing import Tuple
 
+# Determine where to store temporary job data.  Default to a "jobs" directory
+# alongside the project, but fall back to a writable temporary directory when
+# that location isn't available (e.g., in read-only environments like
+# HuggingFace Spaces).
 BASE_DIR = Path(__file__).resolve().parent.parent
-JOBS_DIR = BASE_DIR.parent / "jobs"
-JOBS_DIR.mkdir(exist_ok=True)
+DEFAULT_JOBS_DIR = BASE_DIR.parent / "jobs"
+JOBS_DIR = Path(os.getenv("JOBS_DIR", DEFAULT_JOBS_DIR))
+try:
+    JOBS_DIR.mkdir(parents=True, exist_ok=True)
+except PermissionError:
+    JOBS_DIR = Path(tempfile.gettempdir()) / "jobs"
+    JOBS_DIR.mkdir(parents=True, exist_ok=True)
 
 ALLOWED = {".wav", ".wave", ".aif", ".aiff", ".flac"}
 
