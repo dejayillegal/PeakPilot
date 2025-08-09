@@ -106,20 +106,17 @@ def create_app():
     def progress(session: str):
         return jsonify(read_json(progress_path(session), base_progress()))
 
-    @app.route("/download/<session>/<path:filename>", methods=["GET"])
-    def download_file(session: str, filename: str):
+    @app.route("/download/<session>/<path:file>", methods=["GET"])
+    def download_file(session: str, file: str):
         d = Path(current_app.config["UPLOAD_FOLDER"]) / session
         if not d.exists():
             return "Not found", 404
-        return send_from_directory(str(d), filename, as_attachment=True)
+        return send_from_directory(str(d), file, as_attachment=True)
 
     @app.route("/healthz", methods=["GET"])
     def healthz():
-        try:
-            ensure_ffmpeg()
-            return jsonify({"status": "ok", "ffmpeg": True})
-        except Exception:
-            return jsonify({"status": "ok", "ffmpeg": False})
+        ffmpeg_ok, ffprobe_ok = ensure_ffmpeg()
+        return jsonify({"status": "ok", "ffmpeg": ffmpeg_ok, "ffprobe": ffprobe_ok})
 
     return app
 

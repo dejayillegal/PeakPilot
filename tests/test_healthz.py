@@ -5,3 +5,4 @@ def test_healthz(client):
     assert rv.status_code == 200
     data = rv.get_json()
     assert data['ffmpeg'] is True
+    assert data['ffprobe'] is True
