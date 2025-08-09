@@ -1,4 +1,4 @@
-name: Deploy to Hugging Face Space
+name: Deploy to Hugging Face (prod)
 
 on:
   push:
@@ -6,10 +6,10 @@ on:
   workflow_dispatch:
 
 jobs:
-  deploy:
+  deploy-prod:
     runs-on: ubuntu-latest
     concurrency:
-      group: deploy-peakpilot
+      group: peakpilot-prod
       cancel-in-progress: true
 
     steps:
@@ -23,67 +23,50 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          if [ -z "$HF_TOKEN" ]; then
-            echo "::error::Missing HF_TOKEN secret (Hugging Face write token)"; exit 1;
-          fi
+          test -n "$HF_TOKEN" || (echo "::error::Missing HF_TOKEN secret" && exit 1)
 
       - name: Setup Git LFS
         run: git lfs install
 
-      # Build a README that has the Spaces front-matter and COMMIT it
-      - name: Build HF README with front-matter
+      # Add Spaces front-matter only if README doesn't have it
+      - name: Ensure README has Spaces front-matter
         run: |
-          cat > _hf_header.yml <<'YAML'
-          ---
-          title: PeakPilot
-          emoji: 🎚️
-          colorFrom: indigo
-          colorTo: purple
-          sdk: docker
-          app_port: 7860
-          pinned: false
-          ---
-          YAML
-          cp README.md README.github.md || true
-          if [ -f README.md ]; then
-            cat _hf_header.yml README.md > README.hf.md
-          else
-            cp _hf_header.yml README.hf.md
+          if ! grep -q "sdk: docker" README.md 2>/dev/null; then
+            cat > _hf_header.yml <<'YAML'
+            ---
+            title: PeakPilot
+            emoji: 🎚️
+            colorFrom: indigo
+            colorTo: purple
+            sdk: docker
+            app_port: 7860
+            pinned: false
+            ---
+            YAML
+            [ -f README.md ] && cat _hf_header.yml README.md > README.hf.md || cp _hf_header.yml README.hf.md
+            mv README.hf.md README.md
           fi
-          mv README.hf.md README.md
 
-      # Track brand assets with LFS for the Space push
-      - name: LFS-track brand assets (deploy-only)
+      # Make sure binaries are LFS pointers so HF accepts the push
+      - name: LFS-track deploy assets
         run: |
-          git lfs track "app/static/brand/*.png"
-          git lfs track "static/brand/*.png"
+          git lfs track "*.png" "*.jpg" "*.jpeg" "*.webp" "*.wav" "*.flac" "*.mp3" "*.zip"
           git add .gitattributes
-          [ -f app/static/brand/peakpilot-logo-1024.png ] && git add -f app/static/brand/peakpilot-logo-1024.png
-          [ -f app/static/brand/peakpilot-logo.png ] && git add -f app/static/brand/peakpilot-logo.png
-          [ -f static/brand/peakpilot-logo-1024.png ] && git add -f static/brand/peakpilot-logo-1024.png
-          [ -f static/brand/peakpilot-logo.png ] && git add -f static/brand/peakpilot-logo.png
+          git add -A
 
       - name: Configure committer
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      # *** THIS commits all local changes (README+LFS pointers) so push contains them ***
       - name: Create deploy commit
-        run: |
-          git add -A
-          git commit -m "Deploy to HF (Space-ready files)" || echo "No changes to commit"
+        run: git commit -m "Deploy to HF (prod Space)" || echo "No changes to commit"
 
-      - name: Push repo to HF Space
+      - name: Push to HF Space (prod)
         env:
           HF_USERNAME: djillegal
           SPACE_NAME: PeakPilot
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          set -e
           git remote add space https://huggingface.co/spaces/$HF_USERNAME/$SPACE_NAME || true
-          echo "Before push, remote heads:"
-          git ls-remote https://huggingface.co/spaces/$HF_USERNAME/$SPACE_NAME | sed -n '1,5p'
           git push --force https://$HF_USERNAME:$HF_TOKEN@huggingface.co/spaces/$HF_USERNAME/$SPACE_NAME HEAD:main
-          echo "After push, remote heads:"
-          git ls-remote https://huggingface.co/spaces/$HF_USERNAME/$SPACE_NAME | sed -n '1,5p'
