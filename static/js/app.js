@@ -10,6 +10,8 @@ const trimChk = document.getElementById('trim');
 const padInput = document.getElementById('pad_ms');
 const smartChk = document.getElementById('smart_limiter');
 
+const analyzeBtn = document.getElementById('analyze');
+const modal = document.getElementById('modal');
 const progressWrap = document.getElementById('progressWrap');
 const bar = document.getElementById('bar');
 const phase = document.getElementById('phase');
@@ -48,6 +50,8 @@ let lastMetrics = null;
 
 let currentLabel = 'Original';
 let currentGain = 1.0;   // for A/B gain-match
+let selectedFile = null;
+let selectedBlobUrl = null;
 
 // --- utils ---
 function t(sec){
@@ -56,7 +60,18 @@ function t(sec){
   return `${m}:${s.toString().padStart(2,'0')}`;
 }
 function appendMessage(msg){ if(!msg || msg === lastMessage) return; lastMessage = msg; const li = document.createElement('li'); li.textContent = msg; messages.appendChild(li); }
-function setProgress(p, ph, msg){ progressWrap.classList.remove('hidden'); bar.style.width = (p||0) + '%'; percent.textContent = (p||0) + '%'; phase.textContent = ph || ''; if (msg) appendMessage(msg); }
+function setProgress(p, ph, msg){
+  if (p > 0){
+    bar.classList.remove('indeterminate');
+    bar.style.width = (p||0) + '%';
+    percent.textContent = (p||0) + '%';
+  }else{
+    bar.classList.add('indeterminate');
+    percent.textContent = '';
+  }
+  phase.textContent = ph || '';
+  if (msg) appendMessage(msg);
+}
 function setIf(id, v){ const el = document.getElementById(id); if(!el) return; el.textContent = (v==null? '—' : (typeof v === 'number' ? v.toFixed(2) : v)); }
 
 function makeWaveform(){
@@ -140,11 +155,7 @@ function drawTimelineOverlay(tl){
   }
 }
 
-async function startJob(file){
-  // local preview immediately
-  const blobUrl = URL.createObjectURL(file);
-  loadIntoWave(blobUrl, 'Original', 1.0);
-
+async function startJob(file, blobUrl){
   // send with options
   const fd = new FormData();
   fd.append('audio', file);
@@ -193,6 +204,7 @@ async function poll(url, originalBlobUrl){
 
       if (j.done) {
         clearInterval(polling);
+        modal.classList.add('hidden');
         result.classList.remove('hidden');
         dlClub.href = j.downloads.club;
         dlStreaming.href = j.downloads.streaming;
@@ -206,9 +218,7 @@ async function poll(url, originalBlobUrl){
           pvCustom.style.display = '';
         }
 
-        // A/B wiring with gain-match
         const gains = setABGains(j);
-
         pvClub.onclick = ()=> loadIntoWave(j.downloads.club, 'Club', gains.club);
         pvStreaming.onclick = ()=> loadIntoWave(j.downloads.streaming, 'Streaming', gains.streaming);
         pvPremaster.onclick = ()=> loadIntoWave(j.downloads.premaster, 'Unlimited Premaster', gains.premaster || 1.0);
@@ -224,10 +234,11 @@ async function poll(url, originalBlobUrl){
 // UI wiring
 pick?.addEventListener('click', ()=> fileInput.click());
 drop?.addEventListener('click', ()=> fileInput.click());
-fileInput?.addEventListener('change', ()=> { const f = fileInput.files[0]; if (f){ messages.innerHTML=''; startJob(f); }});
+fileInput?.addEventListener('change', ()=>{ const f=fileInput.files[0]; if(f){ selectedFile=f; selectedBlobUrl=URL.createObjectURL(f); messages.innerHTML=''; loadIntoWave(selectedBlobUrl,'Original',1.0); analyzeBtn.disabled=false; }});
 ['dragenter','dragover'].forEach(ev => drop.addEventListener(ev, e=>{ e.preventDefault(); drop.classList.add('drag'); }));
 ['dragleave','drop'].forEach(ev => drop.addEventListener(ev, e=>{ e.preventDefault(); drop.classList.remove('drag'); }));
-drop.addEventListener('drop', e=>{ e.preventDefault(); const f = e.dataTransfer.files[0]; if (f){ messages.innerHTML=''; startJob(f); }});
+drop.addEventListener('drop', e=>{ e.preventDefault(); const f=e.dataTransfer.files[0]; if(f){ selectedFile=f; selectedBlobUrl=URL.createObjectURL(f); messages.innerHTML=''; loadIntoWave(selectedBlobUrl,'Original',1.0); analyzeBtn.disabled=false; }});
+analyzeBtn?.addEventListener('click', ()=>{ if(!selectedFile) return; messages.innerHTML=''; modal.classList.remove('hidden'); setProgress(0,'Starting…'); startJob(selectedFile, selectedBlobUrl); });
 
 // Player
 playBtn?.addEventListener('click', ()=>{ if(!wave) return; if (wave.isPlaying()){ wave.pause(); playBtn.textContent='Play'; } else { wave.play(); playBtn.textContent='Pause'; }});

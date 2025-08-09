@@ -27,14 +27,16 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:ui-sans-serif,s
 .hidden{display:none}
 .progress-wrap{margin-top:18px}
 .progress-label{display:flex;justify-content:space-between;margin:8px 2px;color:var(--muted)}
-.progressbar{height:10px;background:#1a1a1f;border-radius:8px;overflow:hidden;border:1px solid #23232a}
+.progressbar{position:relative;height:10px;background:#1a1a1f;border-radius:8px;overflow:hidden;border:1px solid #23232a}
 .progressbar>#bar{width:0;height:100%;background:linear-gradient(90deg,var(--accent),#42e9ff);transition:width .3s ease}
+.progressbar>#bar.indeterminate{position:absolute;width:40%;animation:indet 1.5s infinite;background:linear-gradient(90deg,var(--accent),#42e9ff)}
 .messages{list-style:none;padding:8px 4px 0;margin:0;color:var(--muted);font-size:14px;line-height:1.5}
 
 .buttons{display:flex;flex-wrap:wrap;gap:10px;margin:18px 0}
 .btn{display:inline-block;text-decoration:none;color:#fff;background:#111;border:1px solid #2c2c33;padding:10px 14px;border-radius:12px}
 .btn:hover{border-color:var(--accent)}
 .btn.ghost{background:transparent}
+.btn:disabled{opacity:.4;cursor:not-allowed}
 
 .preview{margin-top:16px}
 .player{display:flex;align-items:center;gap:12px;margin-bottom:6px}
@@ -52,3 +54,11 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:ui-sans-serif,s
 .tbl th,.tbl td{padding:6px 8px;border-bottom:1px solid #23232a;color:#d7d7da}
 .tbl thead th{color:#bfc3c9;font-weight:600}
 .tbl tbody tr:last-child td{border-bottom:none}
+
+/* modal */
+.modal{position:fixed;top:0;left:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.75);z-index:1000}
+.modal.hidden{display:none}
+.modal-inner{text-align:center}
+.orb{width:80px;height:80px;border-radius:50%;background:radial-gradient(circle,var(--accent-2),var(--accent));margin:20px auto;animation:orbPulse 2s infinite}
+@keyframes orbPulse{0%{box-shadow:0 0 10px var(--accent);}50%{box-shadow:0 0 20px var(--accent-2);}100%{box-shadow:0 0 10px var(--accent);}}
+@keyframes indet{0%{left:-40%;}50%{left:20%;}100%{left:100%;}}
