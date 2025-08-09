@@ -30,7 +30,7 @@ jobs:
       - name: Setup Git LFS
         run: git lfs install
 
-      # Ensure Spaces front-matter so Docker Space builds properly
+      # Add Spaces front-matter only if missing (ASCII-only to avoid YAML issues)
       - name: Ensure README has Spaces front-matter
         shell: bash
         run: |
@@ -59,23 +59,23 @@ jobs:
             mv README.hf.md README.md
           fi
 
-      # 1) Track binaries with LFS
-      - name: LFS track common binary types
-        shell: bash
+      - name: Configure committer
         run: |
-          git lfs track "*.png" "*.jpg" "*.jpeg" "*.webp" "*.wav" "*.flac" "*.mp3" "*.zip"
-          git add .gitattributes
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      # 2) Flip known offenders to LFS in the index (current commit)
-      - name: Re-add known assets as LFS pointers
+      # Track binaries and flip known offenders to LFS pointers
+      - name: LFS-track and re-add assets
         shell: bash
         run: |
           set -e
+          git lfs track "*.png" "*.jpg" "*.jpeg" "*.webp" "*.wav" "*.flac" "*.mp3" "*.zip"
+          git add .gitattributes
           for f in \
             app/static/brand/peakpilot-logo-1024.png \
+            app/static/brand/peakpilot-logo.png \
             static/brand/peakpilot-logo-1024.png \
-            static/brand/peakpilot-logo.png \
-            app/static/brand/peakpilot-logo.png
+            static/brand/peakpilot-logo.png
           do
             if [[ -f "$f" ]]; then
               git rm --cached -- "$f" || true
@@ -83,24 +83,20 @@ jobs:
             fi
           done
 
-      # 3) Rewrite history for deploy-only push so NO prior commit ships raw binaries
-      - name: Rewrite history with LFS (deploy-only)
-        shell: bash
-        run: |
-          # Include all the common binary types; adjust if you add more
-          git lfs migrate import --include="*.png,*.jpg,*.jpeg,*.webp,*.wav,*.flac,*.mp3,*.zip" --everything
-          git lfs ls-files || true
-
-      - name: Configure committer
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Create deploy commit
+      # IMPORTANT: commit all changes so the working tree is clean before migrate
+      - name: Commit Space-ready changes
         shell: bash
         run: |
           git add -A
-          git commit -m "Deploy to HF (prod Space, LFS-migrated)" || echo "No changes to commit"
+          git commit -m "Prepare deploy: README header + LFS pointers" || echo "No changes to commit"
+
+      # Now it's safe to rewrite history for the deploy push
+      - name: Rewrite history with LFS (deploy-only)
+        shell: bash
+        run: |
+          set -e
+          git lfs migrate import --include="*.png,*.jpg,*.jpeg,*.webp,*.wav,*.flac,*.mp3,*.zip" --everything --yes
+          git lfs ls-files
 
       - name: Push to HF Space (prod)
         env:
@@ -111,5 +107,4 @@ jobs:
         run: |
           set -e
           git remote add space "https://huggingface.co/spaces/$HF_USERNAME/$SPACE_NAME" || true
-          # Push the rewritten history to the Space; does NOT touch GitHub
           git push --force "https://$HF_USERNAME:$HF_TOKEN@huggingface.co/spaces/$HF_USERNAME/$SPACE_NAME" HEAD:main
