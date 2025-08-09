@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  sync-space:
+  deploy:
     runs-on: ubuntu-latest
     concurrency:
       group: deploy-peakpilot
@@ -15,17 +15,39 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          lfs: true         # in case you track any large assets
+          lfs: true
           fetch-depth: 0
 
-      - name: Push repo to HF Space
+      - name: Build HF README and push to Space
         env:
           HF_USERNAME: djillegal
           SPACE_NAME: PeakPilot
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}   # create in GitHub: Settings → Secrets → Actions
         run: |
+          set -e
+
+          # 1) Create HF front-matter
+          cat > _hf_header.yml <<'YAML'
+          ---
+          title: PeakPilot
+          emoji: 🎚️
+          colorFrom: indigo
+          colorTo: purple
+          sdk: docker
+          app_port: 7860
+          pinned: false
+          ---
+          YAML
+
+          # 2) Prepend header to your README *only for this push*
+          cp README.md README.github.md
+          cat _hf_header.yml README.github.md > README.md
+
+          # 3) Commit locally (not to GitHub) and push to HF Space
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          # Add HF Space as a remote and force-update Space's main
+          git add -A
+          git commit -m "Deploy to HF (README with Spaces front-matter)" || true
+
           git remote add space https://huggingface.co/spaces/$HF_USERNAME/$SPACE_NAME || true
           git push --force https://$HF_USERNAME:$HF_TOKEN@huggingface.co/spaces/$HF_USERNAME/$SPACE_NAME HEAD:main
