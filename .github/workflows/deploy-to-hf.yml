@@ -21,33 +21,36 @@ jobs:
           fetch-depth: 0
 
       - name: Ensure HF token present
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         shell: bash
         run: |
-          if [[ -z "${HF_TOKEN:-}" ]]; then
+          if [[ -z "${{ secrets.HF_TOKEN }}" ]]; then
             echo "::error::Missing HF_TOKEN secret"; exit 1
           fi
 
       - name: Setup Git LFS
         run: git lfs install
 
+      # Add Spaces front-matter (ASCII only) if README lacks it
       - name: Ensure README has Spaces front-matter
         shell: bash
         run: |
           set -euo pipefail
-          if ! grep -q 'sdk:\s*docker' README.md 2>/dev/null; then
-cat > _hf_header.yml <<'EOF'
----
-title: PeakPilot
-emoji: "🎚️"
-colorFrom: indigo
-colorTo: purple
-sdk: docker
-app_port: 7860
-pinned: false
----
-EOF
+          need_header=1
+          if [[ -f README.md ]]; then
+            grep -Eq '^sdk:\s*docker' README.md && need_header=0 || true
+          fi
+          if [[ "$need_header" -eq 1 ]]; then
+            {
+              echo '---'
+              echo 'title: PeakPilot'
+              echo 'emoji: ":control_knobs:"'
+              echo 'colorFrom: indigo'
+              echo 'colorTo: purple'
+              echo 'sdk: docker'
+              echo 'app_port: 7860'
+              echo 'pinned: false'
+              echo '---'
+            } > _hf_header.yml
             if [[ -f README.md ]]; then
               cat _hf_header.yml README.md > README.hf.md
             else
@@ -56,6 +59,7 @@ EOF
             mv README.hf.md README.md
           fi
 
+      # Track binaries so HF accepts the push (pre-receive hook)
       - name: LFS-track deploy assets
         shell: bash
         run: |
@@ -81,5 +85,5 @@ EOF
         shell: bash
         run: |
           set -e
-          git remote add space https://huggingface.co/spaces/$HF_USERNAME/$SPACE_NAME || true
+          git remote add space "https://huggingface.co/spaces/$HF_USERNAME/$SPACE_NAME" || true
           git push --force "https://$HF_USERNAME:$HF_TOKEN@huggingface.co/spaces/$HF_USERNAME/$SPACE_NAME" HEAD:main
