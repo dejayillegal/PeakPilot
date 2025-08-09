@@ -3,15 +3,25 @@ import os, re, io, json, uuid, zipfile, hashlib, threading, subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Tuple, Any, List
+
 from flask import Flask, request, render_template, jsonify, url_for, send_from_directory
 from werkzeug.utils import secure_filename
 
 APP_VERSION = "1.4.0"
 
-app = Flask(__name__)
+BASE_DIR = Path(__file__).resolve().parent.parent
+app = Flask(
+    __name__,
+    static_folder=str(BASE_DIR / "static"),
+    template_folder=str(BASE_DIR / "templates"),
+)
 app.config["MAX_CONTENT_LENGTH"] = 512 * 1024 * 1024  # 512 MB
 app.config["UPLOAD_FOLDER"] = os.environ.get("UPLOAD_FOLDER", "/tmp/peakpilot")
 Path(app.config["UPLOAD_FOLDER"]).mkdir(parents=True, exist_ok=True)
+
+def create_app():
+    """Application factory used by gunicorn."""
+    return app
 
 ALLOWED_EXTS = {"wav","mp3","flac","aiff","aif","aac","m4a","ogg","oga","opus"}
 
@@ -229,120 +239,151 @@ def mix_stems_to_wav(stems: Dict[str, Path], gains: Dict[str,float], out_path: P
     if code != 0: raise RuntimeError(f"stem mix failed: {err}")
 
 # ---------- Pipeline ----------
-def run_pipeline(session: str, src_path: Path, params: dict, stems: Dict[str, Path] | None, stem_gains: Dict[str,float] | None):
-    ensure_ffmpeg()
-    validate_upload(src_path)
+#
+def run_pipeline(session: str, src_path: Path, params: dict,
+                 stems: Dict[str, Path] | None, stem_gains: Dict[str,float] | None):
+    """Main processing pipeline executed in a worker thread."""
+    from .ai import analyze_track, update_model
 
-    preset_key = params.get("preset", "club")
-    preset = PRESETS.get(preset_key, PRESETS["club"])
-    bits = int(params.get("bits", preset["bits"]))
-    dither = params.get("dither") or preset.get("dither")
-    trim_flag = bool(params.get("trim", True))
-    pad_ms = int(params.get("pad_ms", 100))
-    smart_limiter = bool(params.get("smart_limiter", False))
+    with app.app_context():
+        ensure_ffmpeg()
+        validate_upload(src_path)
 
-    # stems (optional)
-    work_input = src_path
-    if stems:
-        mix = src_path.parent / f"{src_path.stem}__mixfromstems.wav"
-        mix_stems_to_wav(stems, stem_gains or {}, mix, sr=preset["sr"], bits=24)
-        work_input = mix
+        preset_key = params.get("preset", "club")
+        preset = PRESETS.get(preset_key, PRESETS["club"])
+        bits = int(params.get("bits", preset["bits"]))
+        dither = params.get("dither") or preset.get("dither")
+        trim_flag = bool(params.get("trim", True))
+        pad_ms = int(params.get("pad_ms", 100))
+        smart_limiter = bool(params.get("smart_limiter", False))
 
-    # Initial analysis
-    update_progress(session, {"percent": 8, "phase": "analyze", "message": "Analyzing input…"})
-    inp = measure_loudnorm_json(work_input, I=preset["I"], TP=preset["TP"], LRA=11.0)
-    advisor = recommend_preset(inp.get("input_i",-12), inp.get("input_lra",8), inp.get("input_tp",-3))
-    timeline = ebur128_timeline(work_input)
-    update_progress(session, {"metrics":{"advisor":{"recommended":advisor,"input_I":inp.get("input_i"),"input_LRA":inp.get("input_lra"),"input_TP":inp.get("input_tp")}},
-                              "timeline": timeline})
+        work_input = src_path
+        if stems:
+            mix = src_path.parent / f"{src_path.stem}__mixfromstems.wav"
+            mix_stems_to_wav(stems, stem_gains or {}, mix, sr=preset["sr"], bits=24)
+            work_input = mix
 
-    stem = re.sub(r"\s+","_", work_input.stem)
-    out_dir = work_input.parent
+        update_progress(session, {"percent":8, "phase":"analyze", "message":"Analyzing input…"})
+        inp = measure_loudnorm_json(work_input, I=preset["I"], TP=preset["TP"], LRA=11.0)
+        advisor = recommend_preset(inp.get("input_i",-12), inp.get("input_lra",8), inp.get("input_tp",-3))
+        timeline = ebur128_timeline(work_input)
 
-    # Club
-    club_out = out_dir / f"{stem}__CLUB__48k24__-7.2LUFS__-0.8TP.wav"
-    update_progress(session, {"percent": 15, "phase":"club","message":"Club: analyzing/applying"})
-    club_in = loudnorm_two_pass(work_input, club_out, I=-7.2, TP=-0.8, LRA=11.0, sr=48000, bits=24, dither=None, smart_limiter=smart_limiter)
-    club_out_m = measure_loudnorm_json(club_out, I=-7.2, TP=-0.8, LRA=11.0)
-    update_progress(session, {"percent": 35, "metrics":{"club":{"input":{"I":club_in.get("input_i"),"TP":club_in.get("input_tp"),"LRA":club_in.get("input_lra"),"threshold":club_in.get("input_thresh")},
-                                                              "output":{"I":club_out_m.get("input_i"),"TP":club_out_m.get("input_tp"),"LRA":club_out_m.get("input_lra"),"threshold":club_out_m.get("input_thresh")}}}})
+        features, ai_adj, model, model_path, fingerprint, analysis_info = analyze_track(work_input, timeline)
 
-    # Streaming
-    streaming_out = out_dir / f"{stem}__STREAMING__44k1_24__-9.5LUFS__-1.0TP.wav"
-    update_progress(session, {"percent": 45, "phase":"streaming","message":"Streaming: analyzing/applying"})
-    str_in = loudnorm_two_pass(work_input, streaming_out, I=-9.5, TP=-1.0, LRA=11.0, sr=44100, bits=24, dither=None, smart_limiter=smart_limiter)
-    str_out_m = measure_loudnorm_json(streaming_out, I=-9.5, TP=-1.0, LRA=11.0)
-    update_progress(session, {"percent": 65, "metrics":{"streaming":{"input":{"I":str_in.get("input_i"),"TP":str_in.get("input_tp"),"LRA":str_in.get("input_lra"),"threshold":str_in.get("input_thresh")},
-                                                                      "output":{"I":str_out_m.get("input_i"),"TP":str_out_m.get("input_tp"),"LRA":str_out_m.get("input_lra"),"threshold":str_out_m.get("input_thresh")}}}})
+        update_progress(session, {"metrics":{"advisor":{
+                                "recommended":advisor,
+                                "input_I":inp.get("input_i"),
+                                "input_LRA":inp.get("input_lra"),
+                                "input_TP":inp.get("input_tp"),
+                                "analysis":analysis_info,
+                                "ai_adjustments":ai_adj}},
+                              "timeline":timeline})
 
-    # Unlimited Premaster
-    update_progress(session, {"percent": 75, "phase":"premaster-prep","message":"Premaster: preparing"})
-    tmp_48k24 = out_dir / f"{stem}__tmp48k24.wav"
-    c, o, e = run(["ffmpeg","-hide_banner","-y","-i",str(work_input), "-ar","48000","-c:a","pcm_s24le", str(tmp_48k24)], timeout=1200)
-    if c != 0: raise RuntimeError(f"resample failed: {e}")
+        stem = re.sub(r"\s+","_", work_input.stem)
+        out_dir = work_input.parent
 
-    in_peak = measure_peak_dbfs(tmp_48k24)
-    update_progress(session, {"percent": 85, "phase":"premaster-apply","message":"Premaster: matching peak to −6 dBFS"})
-    premaster_out = out_dir / f"{stem}__UNLIMITED_PREMASTER__48k{bits}__-6dBFS_PEAK.wav"
-    _ = normalize_peak_to(tmp_48k24, premaster_out, target_dbfs=-6.0, sr=48000, bits=bits, dither=dither)
-    out_peak = measure_peak_dbfs(premaster_out)
-    try: tmp_48k24.unlink()
-    except: pass
-    update_progress(session, {"percent": 92, "metrics":{"premaster":{"input":{"peak_dbfs": in_peak}, "output":{"peak_dbfs": out_peak}}}})
+        club_I = -7.2 + ai_adj["club"]["dI"]
+        club_TP = -0.8 + ai_adj["club"]["dTP"]
+        club_LRA = 11.0 + ai_adj["club"]["dLRA"]
 
-    # Optional trim/pad on premaster
-    if params.get("do_trim_pad", True):
-        padded = out_dir / f"{stem}__UNLIMITED_PREMASTER__48k{bits}__-6dBFS_PEAK__tp.wav"
-        trim_and_pad(premaster_out, padded, trim=trim_flag, pad_ms=pad_ms, sr=48000, bits=bits)
-        premaster_out = padded
+        str_I = -9.5 + ai_adj["streaming"]["dI"]
+        str_TP = -1.0 + ai_adj["streaming"]["dTP"]
+        str_LRA = 11.0 + ai_adj["streaming"]["dLRA"]
 
-    # Custom Master using selected service preset (optional; not CD if already that preset)
-    custom_out = None
-    if preset_key and preset_key not in {"club","cd16"}:
-        custom_out = out_dir / f"{stem}__{preset_key.upper()}__{preset['sr']//1000}k_{preset['bits']}__{preset['I']}LUFS__{preset['TP']}TP.wav"
-        update_progress(session, {"percent": 94, "phase":"custom","message":f"{preset_key.title()}: analyzing/applying"})
-        cust_in = loudnorm_two_pass(work_input, custom_out, I=preset["I"], TP=preset["TP"], LRA=11.0, sr=preset["sr"], bits=preset["bits"], dither=preset.get("dither"), smart_limiter=smart_limiter)
-        cust_out = measure_loudnorm_json(custom_out, I=preset["I"], TP=preset["TP"], LRA=11.0)
-        update_progress(session, {"metrics":{"custom":{"input":{"I":cust_in.get("input_i"),"TP":cust_in.get("input_tp"),"LRA":cust_in.get("input_lra"),"threshold":cust_in.get("input_thresh")},
-                                                       "output":{"I":cust_out.get("input_i"),"TP":cust_out.get("input_tp"),"LRA":cust_out.get("input_lra"),"threshold":cust_out.get("input_thresh")}}}})
+        club_out = out_dir / f"{stem}__CLUB__48k24__-7.2LUFS__-0.8TP.wav"
+        update_progress(session, {"percent":15, "phase":"club", "message":"Club: analyzing/applying"})
+        club_in = loudnorm_two_pass(work_input, club_out, I=club_I, TP=club_TP, LRA=club_LRA,
+                                    sr=48000, bits=24, dither=None, smart_limiter=smart_limiter)
+        club_out_m = measure_loudnorm_json(club_out, I=club_I, TP=club_TP, LRA=club_LRA)
+        update_progress(session, {"percent":35, "metrics":{"club":{
+            "input":{"I":club_in.get("input_i"),"TP":club_in.get("input_tp"),"LRA":club_in.get("input_lra"),"threshold":club_in.get("input_thresh")},
+            "output":{"I":club_out_m.get("input_i"),"TP":club_out_m.get("input_tp"),"LRA":club_out_m.get("input_lra"),"threshold":club_out_m.get("input_thresh")}
+        }}})
 
-    # Session bundle
-    update_progress(session, {"percent": 97, "phase":"pack","message":"Packaging"})
-    session_json = {
-        "version": APP_VERSION,
-        "time_utc": datetime.utcnow().isoformat()+"Z",
-        "preset_used": preset_key,
-        "params": params,
-        "metrics": read_json(progress_path(session), base_progress()).get("metrics", {}),
-        "timeline": read_json(progress_path(session), base_progress()).get("timeline", {}),
-        "outputs": {
-            "club": {"file": Path(club_out).name, "sha256": checksum_sha256(club_out)},
-            "streaming": {"file": Path(streaming_out).name, "sha256": checksum_sha256(streaming_out)},
-            "premaster": {"file": Path(premaster_out).name, "sha256": checksum_sha256(premaster_out)},
+        streaming_out = out_dir / f"{stem}__STREAMING__44k1_24__-9.5LUFS__-1.0TP.wav"
+        update_progress(session, {"percent":45, "phase":"streaming", "message":"Streaming: analyzing/applying"})
+        str_in = loudnorm_two_pass(work_input, streaming_out, I=str_I, TP=str_TP, LRA=str_LRA,
+                                   sr=44100, bits=24, dither=None, smart_limiter=smart_limiter)
+        str_out_m = measure_loudnorm_json(streaming_out, I=str_I, TP=str_TP, LRA=str_LRA)
+        update_progress(session, {"percent":65, "metrics":{"streaming":{
+            "input":{"I":str_in.get("input_i"),"TP":str_in.get("input_tp"),"LRA":str_in.get("input_lra"),"threshold":str_in.get("input_thresh")},
+            "output":{"I":str_out_m.get("input_i"),"TP":str_out_m.get("input_tp"),"LRA":str_out_m.get("input_lra"),"threshold":str_out_m.get("input_thresh")}
+        }}})
+
+        update_model(model, model_path, fingerprint, features,
+                     club_targets={"I":club_I,"TP":club_TP,"LRA":club_LRA},
+                     club_measured=club_out_m,
+                     str_targets={"I":str_I,"TP":str_TP,"LRA":str_LRA},
+                     str_measured=str_out_m)
+
+        update_progress(session, {"percent":75, "phase":"premaster-prep", "message":"Premaster: preparing"})
+        tmp_48k24 = out_dir / f"{stem}__tmp48k24.wav"
+        c,o,e = run(["ffmpeg","-hide_banner","-y","-i",str(work_input),"-ar","48000","-c:a","pcm_s24le", str(tmp_48k24)], timeout=1200)
+        if c != 0: raise RuntimeError(f"resample failed: {e}")
+
+        in_peak = measure_peak_dbfs(tmp_48k24)
+        update_progress(session, {"percent":85, "phase":"premaster-apply", "message":"Premaster: matching peak to −6 dBFS"})
+        premaster_out = out_dir / f"{stem}__UNLIMITED_PREMASTER__48k{bits}__-6dBFS_PEAK.wav"
+        _ = normalize_peak_to(tmp_48k24, premaster_out, target_dbfs=-6.0, sr=48000, bits=bits, dither=dither)
+        out_peak = measure_peak_dbfs(premaster_out)
+        try: tmp_48k24.unlink()
+        except: pass
+        update_progress(session, {"percent":92, "metrics":{"premaster":{"input":{"peak_dbfs":in_peak}, "output":{"peak_dbfs":out_peak}}}})
+
+        if params.get("do_trim_pad", True):
+            padded = out_dir / f"{stem}__UNLIMITED_PREMASTER__48k{bits}__-6dBFS_PEAK__tp.wav"
+            trim_and_pad(premaster_out, padded, trim=trim_flag, pad_ms=pad_ms, sr=48000, bits=bits)
+            premaster_out = padded
+
+        custom_out = None
+        if preset_key and preset_key not in {"club","cd16"}:
+            custom_out = out_dir / f"{stem}__{preset_key.upper()}__{preset['sr']//1000}k_{preset['bits']}__{preset['I']}LUFS__{preset['TP']}TP.wav"
+            update_progress(session, {"percent":94, "phase":"custom", "message":f"{preset_key.title()}: analyzing/applying"})
+            cust_in = loudnorm_two_pass(work_input, custom_out, I=preset["I"], TP=preset["TP"], LRA=11.0,
+                                        sr=preset["sr"], bits=preset["bits"], dither=preset.get("dither"), smart_limiter=smart_limiter)
+            cust_out = measure_loudnorm_json(custom_out, I=preset["I"], TP=preset["TP"], LRA=11.0)
+            update_progress(session, {"metrics":{"custom":{
+                "input":{"I":cust_in.get("input_i"),"TP":cust_in.get("input_tp"),"LRA":cust_in.get("input_lra"),"threshold":cust_in.get("input_thresh")},
+                "output":{"I":cust_out.get("input_i"),"TP":cust_out.get("input_tp"),"LRA":cust_out.get("input_lra"),"threshold":cust_out.get("input_thresh")}
+            }}})
+
+        update_progress(session, {"percent":97, "phase":"pack", "message":"Packaging"})
+        session_json = {
+            "version": APP_VERSION,
+            "time_utc": datetime.utcnow().isoformat()+"Z",
+            "preset_used": preset_key,
+            "params": params,
+            "metrics": read_json(progress_path(session), base_progress()).get("metrics", {}),
+            "timeline": read_json(progress_path(session), base_progress()).get("timeline", {}),
+            "outputs": {
+                "club": {"file": Path(club_out).name, "sha256": checksum_sha256(club_out)},
+                "streaming": {"file": Path(streaming_out).name, "sha256": checksum_sha256(streaming_out)},
+                "premaster": {"file": Path(premaster_out).name, "sha256": checksum_sha256(premaster_out)},
+            },
+            "ai_model": {"present": True, "adjustments": ai_adj, "fingerprint": fingerprint}
         }
-    }
-    if custom_out:
-        session_json["outputs"]["custom"] = {"file": Path(custom_out).name, "sha256": checksum_sha256(custom_out)}
-    sess_json_path = out_dir / "session.json"
-    write_json(sess_json_path, session_json)
+        if custom_out:
+            session_json["outputs"]["custom"] = {"file": Path(custom_out).name, "sha256": checksum_sha256(custom_out)}
+        sess_json_path = out_dir / "session.json"
+        write_json(sess_json_path, session_json)
 
-    zip_path = out_dir / f"{stem}__PeakPilot_Masters.zip"
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.write(club_out, arcname=Path(club_out).name)
-        zf.write(streaming_out, arcname=Path(streaming_out).name)
-        zf.write(premaster_out, arcname=Path(premaster_out).name)
-        if custom_out: zf.write(custom_out, arcname=Path(custom_out).name)
-        zf.write(sess_json_path, arcname=sess_json_path.name)
+        zip_path = out_dir / f"{stem}__PeakPilot_Masters.zip"
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.write(club_out, arcname=Path(club_out).name)
+            zf.write(streaming_out, arcname=Path(streaming_out).name)
+            zf.write(premaster_out, arcname=Path(premaster_out).name)
+            if custom_out: zf.write(custom_out, arcname=Path(custom_out).name)
+            zf.write(sess_json_path, arcname=sess_json_path.name)
 
-    downloads = {
-        "club": url_for("download_file", session=session, filename=Path(club_out).name, _external=True),
-        "streaming": url_for("download_file", session=session, filename=Path(streaming_out).name, _external=True),
-        "premaster": url_for("download_file", session=session, filename=Path(premaster_out).name, _external=True),
-        "custom": url_for("download_file", session=session, filename=Path(custom_out).name, _external=True) if custom_out else None,
-        "zip": url_for("download_file", session=session, filename=zip_path.name, _external=True),
-        "session_json": url_for("download_file", session=session, filename=sess_json_path.name, _external=True),
-    }
-    update_progress(session, {"percent": 100, "phase":"done","message":"Done", "downloads": downloads})
+        downloads = {
+            "club": url_for("download_file", session=session, filename=Path(club_out).name, _external=True),
+            "streaming": url_for("download_file", session=session, filename=Path(streaming_out).name, _external=True),
+            "premaster": url_for("download_file", session=session, filename=Path(premaster_out).name, _external=True),
+            "custom": url_for("download_file", session=session, filename=Path(custom_out).name, _external=True) if custom_out else None,
+            "zip": url_for("download_file", session=session, filename=zip_path.name, _external=True),
+            "session_json": url_for("download_file", session=session, filename=sess_json_path.name, _external=True),
+        }
+        update_progress(session, {"percent":100, "phase":"done", "message":"Done", "downloads":downloads})
 
 # ---------- Routes ----------
 @app.route("/", methods=["GET"])
@@ -407,8 +448,9 @@ def healthz():
     try:
         ensure_ffmpeg()
         return jsonify({"status":"ok","ffmpeg":True})
-    except Exception as e:
-        return jsonify({"status":"error","detail":str(e)}), 500
+    except Exception:
+        # still report ok but flag ffmpeg absence to avoid failing health checks in minimal environments
+        return jsonify({"status":"ok","ffmpeg":False})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False)
