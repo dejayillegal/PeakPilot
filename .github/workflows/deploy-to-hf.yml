@@ -11,6 +11,7 @@ jobs:
     concurrency:
       group: deploy-peakpilot
       cancel-in-progress: true
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -18,15 +19,13 @@ jobs:
           lfs: true
           fetch-depth: 0
 
-      - name: Build HF README and push to Space
-        env:
-          HF_USERNAME: djillegal
-          SPACE_NAME: PeakPilot
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}   # create in GitHub: Settings → Secrets → Actions
-        run: |
-          set -e
+      - name: Setup Git LFS
+        run: git lfs install
 
-          # 1) Create HF front-matter
+      # Build an HF-specific README by prepending the Spaces front-matter.
+      # This commit exists only in the runner and will be pushed to the Space (not back to GitHub).
+      - name: Build HF README with front-matter
+        run: |
           cat > _hf_header.yml <<'YAML'
           ---
           title: PeakPilot
@@ -38,16 +37,27 @@ jobs:
           pinned: false
           ---
           YAML
+          cp README.md README.github.md || true
+          if [ -f README.md ]; then
+            cat _hf_header.yml README.md > README.hf.md
+          else
+            cp _hf_header.yml README.hf.md
+          fi
+          mv README.hf.md README.md
 
-          # 2) Prepend header to your README *only for this push*
-          cp README.md README.github.md
-          cat _hf_header.yml README.github.md > README.md
+      # Track brand assets with LFS for the Space push only.
+      # Covers both possible paths: "app/static/brand" and "static/brand".
+      - name: LFS-track brand assets (deploy-only)
+        run: |
+          git lfs track "app/static/brand/*.png"
+          git lfs track "static/brand/*.png"
+          git add .gitattributes
+          [ -f app/static/brand/peakpilot-logo-1024.png ] && git add -f app/static/brand/peakpilot-logo-1024.png
+          [ -f app/static/brand/peakpilot-logo.png ] && git add -f app/static/brand/peakpilot-logo.png
+          [ -f static/brand/peakpilot-logo-1024.png ] && git add -f static/brand/peakpilot-logo-1024.png
+          [ -f static/brand/peakpilot-logo.png ] && git add -f static/brand/peakpilot-logo.png
+          git commit -m "LFS: track brand assets for Space deploy" || true
 
-          # 3) Commit locally (not to GitHub) and push to HF Space
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "Deploy to HF (README with Spaces front-matter)" || true
-
-          git remote add space https://huggingface.co/spaces/$HF_USERNAME/$SPACE_NAME || true
-          git push --force https://$HF_USERNAME:$HF_TOKEN@huggingface.co/spaces/$HF_USERNAME/$SPACE_NAME HEAD:main
+      - name: Configure committer
+        run: |
+          git config user.name
