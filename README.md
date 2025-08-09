@@ -1,3 +1,22 @@
+---
+title: PeakPilot
+emoji: 🎚️
+colorFrom: indigo
+colorTo: purple
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
+Notes
+The server writes incremental progress and metrics to /tmp/peakpilot/<session>/progress.json. The UI polls /progress/<session> every second.
+
+session.json includes version, selected preset, metrics, timeline arrays, and output checksums. It’s included in the ZIP and also separately downloadable.
+
+Gain-matched A/B relies on integrated loudness values returned in progress JSON; the client computes per-preview volume multipliers and applies them when loading each source.
+
+Timeline overlay is drawn on a canvas under the waveform using 1 Hz short-term LUFS and TP hotspots.
+
 # PeakPilot
 
 Local web UI for creating Club, Streaming, and Unlimited Premaster renders using ffmpeg.

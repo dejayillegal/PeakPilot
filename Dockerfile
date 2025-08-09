@@ -1,16 +1,14 @@
 FROM python:3.11-slim
-
-# System deps
-RUN apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /app
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg libsndfile1 && \
+    rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt && pip install --no-cache-dir gunicorn
 
 COPY . .
-# Spaces conventions
-ENV HOST=0.0.0.0
-ENV PORT=7860
 EXPOSE 7860
-
-CMD ["python", "app.py"]
+CMD ["gunicorn","-w","2","-k","gthread","-t","300","-b","0.0.0.0:7860","app:app"]
