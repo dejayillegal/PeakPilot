@@ -1,5 +1,28 @@
+import io
 import os
 import sys
+import numpy as np
+import soundfile as sf
+import pytest
 
-# Add project root to sys.path so tests can import app package
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from app import create_app
+
+@pytest.fixture
+def client(tmp_path, monkeypatch):
+    app = create_app()
+    app.config['TESTING'] = True
+    upload_dir = tmp_path / 'uploads'
+    upload_dir.mkdir()
+    monkeypatch.setitem(app.config, 'UPLOAD_FOLDER', str(upload_dir))
+    return app.test_client()
+
+@pytest.fixture
+def sine_file(tmp_path):
+    sr = 48000
+    t = np.linspace(0, 1.0, sr, False)
+    wave = 0.1 * np.sin(2 * np.pi * 440 * t)
+    path = tmp_path / 'tone.wav'
+    sf.write(path, wave, sr)
+    return path
