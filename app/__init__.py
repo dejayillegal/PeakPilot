@@ -23,6 +23,7 @@ from .pipeline import (
     update_progress,
     run_pipeline,
     ensure_ffmpeg,
+    init_app,
 )
 
 
@@ -36,6 +37,8 @@ def create_app():
     app.config["MAX_CONTENT_LENGTH"] = 512 * 1024 * 1024  # 512 MB
     app.config["UPLOAD_FOLDER"] = os.environ.get("UPLOAD_FOLDER", "/tmp/peakpilot")
     Path(app.config["UPLOAD_FOLDER"]).mkdir(parents=True, exist_ok=True)
+
+    init_app(app)
 
     @app.route("/", methods=["GET"])
     def index():
@@ -90,10 +93,9 @@ def create_app():
             },
         )
 
-        app_obj = current_app._get_current_object()
         t = threading.Thread(
             target=run_pipeline,
-            args=(app_obj, session, src, params, stems if stems else None, gains if gains else None),
+            args=(session, src, params, stems if stems else None, gains if gains else None),
             daemon=True,
         )
         t.start()
