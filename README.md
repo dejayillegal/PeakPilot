@@ -32,3 +32,13 @@ pytest
 docker build -t peakpilot .
 docker run -p 5000:5000 peakpilot
 ```
+
+## Deploy (HF Spaces + Pages)
+
+Backend: HF Space (Docker). Env: HOST=0.0.0.0, PORT=7860, ALLOWED_ORIGIN=https://dejayillegal.github.io/PeakPilot.
+
+Frontend: GitHub Pages from /docs. /docs/config.js points to your Space.
+
+Wake on access: Pages auto-polls /healthz (first request may take 5–20 s).
+
+Local dev: python app.py → http://127.0.0.1:5000 (set /docs/config.js to localhost for dev).

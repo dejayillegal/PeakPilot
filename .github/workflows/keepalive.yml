@@ -1,0 +1,11 @@
+name: Keep HF Space Warm (optional)
+on:
+  schedule: [{ cron: "0 3 * * *" }]
+  workflow_dispatch:
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Space
+        run: |
+          curl -sSfL "https://djillegal-peakpilot.hf.space/healthz" || true
