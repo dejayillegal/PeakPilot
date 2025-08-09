@@ -1,1 +1,37 @@
 
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Local Mastering – Club / Streaming / Premaster</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+  <div class="container">
+    <h1>Local Mastering</h1>
+    <p>Drop a lossless audio file (WAV, AIFF, or FLAC). The app will create:</p>
+    <ul>
+      <li><b>Club Master</b> — 48 kHz / 24-bit, target −7.5…−6.5 LUFS-I, TP ≤ −0.8 dBTP</li>
+      <li><b>Streaming Master</b> — 44.1 kHz / 24-bit, target −10…−9 LUFS-I, TP ≤ −1.0 dBTP</li>
+      <li><b>Unlimited Premaster</b> — 48 kHz / 24-bit, peaks ≈ −6.0 dBFS (no limiter)</li>
+    </ul>
+    <form action="{{ url_for('process') }}" method="post" enctype="multipart/form-data" class="card">
+      <input type="file" name="audio" accept=".wav,.wave,.aif,.aiff,.flac" required>
+      <button type="submit">Process</button>
+    </form>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div class="flash">
+          {% for category, message in messages %}
+            <p class="{{ category }}">{{ message }}</p>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+    <footer>
+      <small>Requires <code>ffmpeg</code> in PATH. Open-source, runs entirely on your machine.</small>
+    </footer>
+  </div>
+</body>
+</html>
