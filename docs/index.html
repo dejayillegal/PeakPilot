@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>PeakPilot — Local Mastering</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="preload" href="styles.css" as="style">
+  <link rel="stylesheet" href="styles.css">
+  <script src="config.js"></script>
+</head>
+<body>
+  <header class="wrap">
+    <div class="brand">PeakPilot</div>
+    <nav><a href="https://github.com/dejayillegal/PeakPilot#readme" target="_blank" rel="noopener">Docs / README</a></nav>
+  </header>
+
+  <main class="wrap">
+    <section class="hero card">
+      <h1>Local mastering, zero fuss.</h1>
+      <p>Outputs:</p>
+      <ul>
+        <li><b>Club Master</b> — 48 kHz / 24-bit, −0.8 dBTP, −7.5…−6.5 LUFS-I</li>
+        <li><b>Streaming Master</b> — 44.1 kHz / 24-bit, −1.0 dBTP, −10…−9 LUFS-I</li>
+        <li><b>Unlimited Premaster</b> — 48 kHz / 24-bit, peaks ≈ −6.0 dBFS (no limiter)</li>
+      </ul>
+      <a id="open-app" class="button" href="#" rel="noopener">Open App</a>
+      <div id="status" class="status"></div>
+      <p class="hint">Backend runs locally or on Hugging Face Spaces. Requires <code>ffmpeg</code> when run locally.</p>
+    </section>
+  </main>
+
+  <footer class="wrap">
+    <small>© <span id="year"></span> PeakPilot</small>
+  </footer>
+
+  <script>
+    const cfg = window.PEAKPILOT_CONFIG || {};
+    const BACKEND = (cfg.BACKEND_URL || "http://127.0.0.1:5000").replace(/\/+$/,'');
+    const HEALTH  = BACKEND + "/healthz";
+    const btn = document.getElementById("open-app");
+    const st  = document.getElementById("status");
+    document.getElementById('year').textContent = new Date().getFullYear();
+
+    async function wait(ms){ return new Promise(r=>setTimeout(r,ms)); }
+
+    async function wakeBackend() {
+      const poll = cfg.WAKE_POLL_MS || 2000;
+      const timeout = cfg.WAKE_TIMEOUT_MS || 90000;
+      const start = Date.now();
+      st.textContent = "Checking backend…";
+      btn.setAttribute("disabled","disabled");
+
+      while (Date.now() - start < timeout) {
+        try {
+          const res = await fetch(HEALTH, {mode:"cors", cache:"no-store"});
+          if (res.ok) {
+            const j = await res.json().catch(()=>({}));
+            st.textContent = "Backend is ready" + (j.ffmpeg ? ` (ffmpeg: ${j.ffmpeg})` : "");
+            btn.removeAttribute("disabled");
+            btn.href = BACKEND;
+            return true;
+          }
+        } catch (e) { /* sleeping: keep polling */ }
+        st.textContent = "Waking backend… (free Spaces can take ~5–20s)";
+        await wait(poll);
+      }
+      st.textContent = "Backend didn’t respond in time. You can try again.";
+      btn.removeAttribute("disabled");
+      btn.href = BACKEND; // allow manual open
+      return false;
+    }
+
+    wakeBackend(); // auto on load
+    btn.addEventListener("click", e => {
+      if (btn.getAttribute("disabled")) e.preventDefault();
+    });
+  </script>
+</body>
+</html>

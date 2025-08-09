@@ -121,12 +121,6 @@ def status(job_id):
     return jsonify(fs.read_json(job_dir / "job.json"))
 
 
-@bp.route("/healthz")
-def healthz():
-    version = ffmpeg.ffmpeg_version()
-    return jsonify({"ok": bool(version), "ffmpeg": version})
-
-
 @bp.app_errorhandler(404)
 def not_found(e):
     return render_template("404.html"), 404
