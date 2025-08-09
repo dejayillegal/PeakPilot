@@ -1,24 +1,22 @@
 import pytest
-
-from app import create_app
-from app.utils import fs
+import app
 
 
 @pytest.fixture
 def client():
-    app = create_app()
-    app.config['TESTING'] = True
-    with app.test_client() as client:
+    app.app.config['TESTING'] = True
+    with app.app.test_client() as client:
         yield client
 
 
 def test_allowed_file():
-    assert fs.allowed_file('test.wav')
-    assert not fs.allowed_file('bad.mp3')
+    assert app.allowed_file('test.wav')
+    assert app.allowed_file('song.mp3')
+    assert not app.allowed_file('bad.txt')
 
 
 def test_healthz(client):
     rv = client.get('/healthz')
     assert rv.status_code == 200
     data = rv.get_json()
-    assert 'ok' in data
+    assert data.get('status') == 'ok'
