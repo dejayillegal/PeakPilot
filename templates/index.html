@@ -20,7 +20,8 @@
     <h1>Master your track</h1>
     <p class="muted">Upload once → get <strong>Club</strong>, <strong>Streaming</strong>, and <strong>Unlimited Premaster</strong>. Optional <strong>custom</strong> master via service preset.</p>
 
-    <form id="uform" class="options">
+    <details id="advanced" class="options">
+      <summary>Advanced</summary>
       <div class="row">
         <label>Preset</label>
         <select id="preset" name="preset">
@@ -44,7 +45,7 @@
         <label>Pad (ms)</label><input id="pad_ms" type="number" min="0" max="1000" value="100">
         <label>Smart limiter</label><input id="smart_limiter" type="checkbox">
       </div>
-    </form>
+    </details>
 
     <div id="drop" class="dropzone" tabindex="0">
       <input id="file" type="file" accept=".wav,.mp3,.flac,.aiff,.aif,.aac,.m4a,.ogg,.oga,.opus" hidden>
@@ -53,6 +54,8 @@
         <p class="tiny muted">Up to 512 MB · WAV/MP3/FLAC/AIFF/AAC/OGG…</p>
       </div>
     </div>
+
+    <div class="buttons"><button id="analyze" class="btn" disabled>Analyze</button></div>
 
     <!-- Waveform + overlays -->
     <div id="preview" class="preview hidden card subtle">
@@ -68,15 +71,7 @@
       <div class="preview-source muted tiny" id="previewSource">Preview: Original upload</div>
     </div>
 
-    <div id="progressWrap" class="progress-wrap hidden">
-      <div class="progress-label">
-        <span id="phase">Starting…</span>
-        <span id="percent">0%</span>
-      </div>
-      <div class="progressbar"><div id="bar"></div></div>
-      <ul id="messages" class="messages"></ul>
-
-      <div id="metrics" class="metrics card subtle hidden">
+    <div id="metrics" class="metrics card subtle hidden">
         <h4>Measured metrics</h4>
         <div class="grid">
           <div>
@@ -119,6 +114,21 @@
               </tbody>
             </table>
           </div>
+        </div>
+      </div>
+
+    <div id="modal" class="modal hidden">
+      <div class="modal-inner card subtle">
+        <div class="orb"></div>
+        <p>Detecting genre…</p>
+        <p class="tiny muted">Your master preview will be ready shortly and adjustments can be made to taste afterwards.</p>
+        <div id="progressWrap" class="progress-wrap">
+          <div class="progress-label">
+            <span id="phase">Starting…</span>
+            <span id="percent"></span>
+          </div>
+          <div class="progressbar"><div id="bar" class="indeterminate"></div></div>
+          <ul id="messages" class="messages"></ul>
         </div>
       </div>
     </div>
