@@ -19,11 +19,18 @@ jobs:
           lfs: true
           fetch-depth: 0
 
+      - name: Ensure HF token present
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          if [ -z "$HF_TOKEN" ]; then
+            echo "::error::Missing HF_TOKEN secret (Hugging Face write token)"; exit 1;
+          fi
+
       - name: Setup Git LFS
         run: git lfs install
 
-      # Build an HF-specific README by prepending the Spaces front-matter.
-      # This commit exists only in the runner and will be pushed to the Space (not back to GitHub).
+      # Build a README that has the Spaces front-matter and COMMIT it
       - name: Build HF README with front-matter
         run: |
           cat > _hf_header.yml <<'YAML'
@@ -45,8 +52,7 @@ jobs:
           fi
           mv README.hf.md README.md
 
-      # Track brand assets with LFS for the Space push only.
-      # Covers both possible paths: "app/static/brand" and "static/brand".
+      # Track brand assets with LFS for the Space push
       - name: LFS-track brand assets (deploy-only)
         run: |
           git lfs track "app/static/brand/*.png"
@@ -56,8 +62,28 @@ jobs:
           [ -f app/static/brand/peakpilot-logo.png ] && git add -f app/static/brand/peakpilot-logo.png
           [ -f static/brand/peakpilot-logo-1024.png ] && git add -f static/brand/peakpilot-logo-1024.png
           [ -f static/brand/peakpilot-logo.png ] && git add -f static/brand/peakpilot-logo.png
-          git commit -m "LFS: track brand assets for Space deploy" || true
 
       - name: Configure committer
         run: |
-          git config user.name
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      # *** THIS commits all local changes (README+LFS pointers) so push contains them ***
+      - name: Create deploy commit
+        run: |
+          git add -A
+          git commit -m "Deploy to HF (Space-ready files)" || echo "No changes to commit"
+
+      - name: Push repo to HF Space
+        env:
+          HF_USERNAME: djillegal
+          SPACE_NAME: PeakPilot
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          set -e
+          git remote add space https://huggingface.co/spaces/$HF_USERNAME/$SPACE_NAME || true
+          echo "Before push, remote heads:"
+          git ls-remote https://huggingface.co/spaces/$HF_USERNAME/$SPACE_NAME | sed -n '1,5p'
+          git push --force https://$HF_USERNAME:$HF_TOKEN@huggingface.co/spaces/$HF_USERNAME/$SPACE_NAME HEAD:main
+          echo "After push, remote heads:"
+          git ls-remote https://huggingface.co/spaces/$HF_USERNAME/$SPACE_NAME | sed -n '1,5p'
