@@ -23,31 +23,32 @@ jobs:
       - name: Ensure HF token present
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        shell: bash
         run: |
-          if [ -z "$HF_TOKEN" ]; then
-            echo "::error::Missing HF_TOKEN secret"; exit 1;
+          if [[ -z "${HF_TOKEN:-}" ]]; then
+            echo "::error::Missing HF_TOKEN secret"; exit 1
           fi
 
       - name: Setup Git LFS
         run: git lfs install
 
-      # Add Spaces front-matter only if README doesn't already declare sdk: docker
       - name: Ensure README has Spaces front-matter
         shell: bash
         run: |
-          if ! grep -q "sdk: docker" README.md 2>/dev/null; then
-            cat > _hf_header.yml <<'YAML'
-            ---
-            title: PeakPilot
-            emoji: "🎚️"
-            colorFrom: indigo
-            colorTo: purple
-            sdk: docker
-            app_port: 7860
-            pinned: false
-            ---
-            YAML
-            if [ -f README.md ]; then
+          set -euo pipefail
+          if ! grep -q 'sdk:\s*docker' README.md 2>/dev/null; then
+cat > _hf_header.yml <<'EOF'
+---
+title: PeakPilot
+emoji: "🎚️"
+colorFrom: indigo
+colorTo: purple
+sdk: docker
+app_port: 7860
+pinned: false
+---
+EOF
+            if [[ -f README.md ]]; then
               cat _hf_header.yml README.md > README.hf.md
             else
               cp _hf_header.yml README.hf.md
@@ -55,8 +56,8 @@ jobs:
             mv README.hf.md README.md
           fi
 
-      # Track binaries so HF’s pre-receive hook accepts the push
       - name: LFS-track deploy assets
+        shell: bash
         run: |
           git lfs track "*.png" "*.jpg" "*.jpeg" "*.webp" "*.wav" "*.flac" "*.mp3" "*.zip"
           git add .gitattributes
@@ -68,6 +69,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Create deploy commit
+        shell: bash
         run: |
           git commit -m "Deploy to HF (prod Space)" || echo "No changes to commit"
 
@@ -76,6 +78,8 @@ jobs:
           HF_USERNAME: djillegal
           SPACE_NAME: PeakPilot
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        shell: bash
         run: |
+          set -e
           git remote add space https://huggingface.co/spaces/$HF_USERNAME/$SPACE_NAME || true
           git push --force "https://$HF_USERNAME:$HF_TOKEN@huggingface.co/spaces/$HF_USERNAME/$SPACE_NAME" HEAD:main
