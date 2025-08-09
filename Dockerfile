@@ -7,8 +7,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt && pip install --no-cache-dir gunicorn
+RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 EXPOSE 7860
-CMD ["gunicorn","-w","2","-k","gthread","-t","300","-b","0.0.0.0:7860","app:app"]
+CMD ["gunicorn","-w","2","-k","gthread","-t","300","-b","0.0.0.0:7860","app.__init__:create_app()"]
