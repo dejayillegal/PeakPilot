@@ -5,6 +5,7 @@
   <title>PeakPilot — Master in One Click</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/results.css') }}">
   <script src="https://unpkg.com/wavesurfer.js@7"></script>
 </head>
 <body>
@@ -150,8 +151,11 @@
       </div>
     </div>
   </section>
+
+  <section id="pp-results" class="pp-results" aria-live="polite"></section>
 </main>
 
+<script src="{{ url_for('static', filename='js/results.js') }}"></script>
 <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
 </html>
