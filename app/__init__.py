@@ -52,7 +52,7 @@ def create_app():
             subprocess.run([
                 "ffmpeg","-nostdin","-hide_banner","-y",
                 "-i", str(src),
-                "-ar","48000", "-c:a","pcm_s24le",
+                "-ar","48000", "-c:a","pcm_s16le",
                 "-metadata", "encoded_by=PeakPilot",
                 "-metadata", "software=PeakPilot",
                 "-metadata", "comment=Mastered by PeakPilot",
@@ -165,6 +165,9 @@ def create_app():
             download_name=f.name,
             mimetype=meta.get("type", "application/octet-stream"),
         )
+
+    from .routes.stream import bp as stream_bp
+    app.register_blueprint(stream_bp)
 
     return app
 

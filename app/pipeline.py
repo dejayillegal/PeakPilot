@@ -63,6 +63,24 @@ def write_json_atomic(path: str, obj: Dict[str, Any]):
     os.replace(tmp, path)
 
 
+def _make_preview(src: Path, dst: Path):
+    """Generate a 16-bit preview WAV from ``src`` into ``dst``."""
+    tmp = dst.with_suffix(dst.suffix + ".part")
+    try:
+        subprocess.run([
+            "ffmpeg", "-nostdin", "-hide_banner", "-y", "-i", str(src),
+            "-c:a", "pcm_s16le",
+            str(tmp)
+        ], check=True)
+        os.replace(tmp, dst)
+    except Exception:
+        try:
+            import shutil
+            shutil.copyfile(src, dst)
+        except Exception:
+            pass
+
+
 def read_json(path: str) -> Dict[str, Any]:
     with open(path, "r", encoding="utf-8") as fh:
         return json.load(fh)
@@ -274,11 +292,22 @@ def normalize_peak_to(src, dst, peak_dbfs=-6.0, sr=48000, bits=24):
         "-f", "wav",
         part,
     ]
-    run(cmd)
-    if not os.path.exists(part) or os.path.getsize(part) == 0:
-        raise RuntimeError("ffmpeg render failed")
-    os.replace(part, dst)
-    return dst
+    try:
+        run(cmd)
+        if not os.path.exists(part) or os.path.getsize(part) == 0:
+            raise RuntimeError("ffmpeg render failed")
+        os.replace(part, dst)
+        return dst
+    except Exception:
+        # simple pure-python fallback
+        data, sr_in = sf.read(src, dtype='float32')
+        peak = np.max(np.abs(data)) or 1.0
+        target = 10 ** (peak_dbfs / 20.0)
+        gain = target / peak
+        data = data * gain
+        subtype = 'PCM_24' if bits == 24 else 'PCM_16'
+        sf.write(dst, data, sr if sr else sr_in, subtype=subtype)
+        return dst
 
 
 def post_verify(path: str, target_I: float, target_TP: float) -> Tuple[bool, float, float]:
@@ -365,6 +394,7 @@ def run_pipeline(session: str, sess_dir: str, src_path: str, params: Dict[str, A
         loudnorm_two_pass(src_path, club_wav, I=-7.2 + ai_adj["club"]["dI"], TP=-1.0 + ai_adj["club"]["dTP"], LRA=11, sr=48000, bits=24)
         update_progress(sess_dir, masters={"club": {"state": "finalizing", "pct": 99, "message": "Finalizing..."}})
         ok_club, _, _ = post_verify(club_wav, -7.2 + ai_adj["club"]["dI"], -1.0 + ai_adj["club"]["dTP"])
+        _make_preview(Path(sess_dir) / "club_master.wav", Path(sess_dir) / "club_master_preview.wav")
         club_metrics = measure_loudnorm_json(club_wav)
         info_out = ffprobe_info(club_wav)
         sha = checksum_sha256(club_wav)
@@ -397,6 +427,7 @@ def run_pipeline(session: str, sess_dir: str, src_path: str, params: Dict[str, A
         loudnorm_two_pass(src_path, streaming_wav, I=-9.5 + ai_adj["streaming"]["dI"], TP=-1.5 + ai_adj["streaming"]["dTP"], LRA=11, sr=44100, bits=24)
         update_progress(sess_dir, masters={"stream": {"state": "finalizing", "pct": 99, "message": "Finalizing..."}})
         ok_stream, _, _ = post_verify(streaming_wav, -9.5 + ai_adj["streaming"]["dI"], -1.5 + ai_adj["streaming"]["dTP"])
+        _make_preview(Path(sess_dir) / "stream_master.wav", Path(sess_dir) / "stream_master_preview.wav")
         str_metrics = measure_loudnorm_json(streaming_wav)
         info_out = ffprobe_info(streaming_wav)
         sha = checksum_sha256(streaming_wav)
@@ -429,6 +460,7 @@ def run_pipeline(session: str, sess_dir: str, src_path: str, params: Dict[str, A
         normalize_peak_to(src_path, premaster_wav, peak_dbfs=-6.0, sr=48000, bits=24)
         update_progress(sess_dir, masters={"unlimited": {"state": "finalizing", "pct": 99, "message": "Finalizing..."}})
         peak_out = measure_peak_dbfs(premaster_wav)
+        _make_preview(Path(sess_dir) / "premaster_unlimited.wav", Path(sess_dir) / "premaster_unlimited_preview.wav")
         info_out = ffprobe_info(premaster_wav)
         sha = checksum_sha256(premaster_wav)
         write_json_atomic(os.path.join(sess_dir, "premaster_unlimited_info.json"), info_out)
