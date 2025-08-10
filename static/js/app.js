@@ -40,6 +40,7 @@ const pvPremaster = document.getElementById('pvPremaster');
 const pvCustom = document.getElementById('pvCustom');
 
 const metricsPanel = document.getElementById('metrics');
+const customMetrics = document.getElementById('customMetrics');
 const loudCanvas = document.getElementById('loudCanvas');
 const loudCtx = loudCanvas.getContext('2d');
 
@@ -61,10 +62,10 @@ function t(sec){
 }
 function appendMessage(msg){ if(!msg || msg === lastMessage) return; lastMessage = msg; const li = document.createElement('li'); li.textContent = msg; messages.appendChild(li); }
 function setProgress(p, ph, msg){
-  if (p > 0){
+  if (typeof p === 'number' && p >= 0){
     bar.classList.remove('indeterminate');
-    bar.style.width = (p||0) + '%';
-    percent.textContent = (p||0) + '%';
+    bar.style.width = p + '%';
+    percent.textContent = p + '%';
   }else{
     bar.classList.add('indeterminate');
     percent.textContent = '';
@@ -112,6 +113,9 @@ function gainForI(I, targetRef){
 
 function updateMetrics(j){
   lastMetrics = j;
+  if (j.timeline) drawTimelineOverlay(j.timeline);
+  if (!j.metrics) return;
+
   metricsPanel.classList.remove('hidden');
   // Club
   const ci = j.metrics?.club?.input || {}, co = j.metrics?.club?.output || {};
@@ -125,11 +129,14 @@ function updateMetrics(j){
   const pi = j.metrics?.premaster?.input || {}, po = j.metrics?.premaster?.output || {};
   setIf('pre_in_P', pi.peak_dbfs); setIf('pre_out_P', po.peak_dbfs);
   // Custom
-  const ci2 = j.metrics?.custom?.input || {}, co2 = j.metrics?.custom?.output || {};
-  setIf('cus_in_I', ci2.I); setIf('cus_in_TP', ci2.TP); setIf('cus_in_LRA', ci2.LRA); setIf('cus_in_TH', ci2.threshold);
-  setIf('cus_out_I', co2.I); setIf('cus_out_TP', co2.TP); setIf('cus_out_LRA', co2.LRA); setIf('cus_out_TH', co2.threshold);
-
-  drawTimelineOverlay(j.timeline);
+  if (j.metrics?.custom){
+    const ci2 = j.metrics.custom.input || {}, co2 = j.metrics.custom.output || {};
+    setIf('cus_in_I', ci2.I); setIf('cus_in_TP', ci2.TP); setIf('cus_in_LRA', ci2.LRA); setIf('cus_in_TH', ci2.threshold);
+    setIf('cus_out_I', co2.I); setIf('cus_out_TP', co2.TP); setIf('cus_out_LRA', co2.LRA); setIf('cus_out_TH', co2.threshold);
+    customMetrics.classList.remove('hidden');
+  } else {
+    customMetrics.classList.add('hidden');
+  }
 }
 
 function drawTimelineOverlay(tl){
@@ -219,6 +226,7 @@ async function poll(url, originalBlobUrl){
         }
 
         const gains = setABGains(j);
+        loadIntoWave(j.downloads.club, 'Club', gains.club);
         pvClub.onclick = ()=> loadIntoWave(j.downloads.club, 'Club', gains.club);
         pvStreaming.onclick = ()=> loadIntoWave(j.downloads.streaming, 'Streaming', gains.streaming);
         pvPremaster.onclick = ()=> loadIntoWave(j.downloads.premaster, 'Unlimited Premaster', gains.premaster || 1.0);
