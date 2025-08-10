@@ -1,6 +1,8 @@
 FROM python:3.11-slim
 WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+ENV UPLOAD_ROOT=/mnt/data/sessions
+RUN mkdir -p /mnt/data/sessions && chmod -R 777 /mnt/data
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg libsndfile1 && \

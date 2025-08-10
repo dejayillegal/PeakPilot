@@ -29,7 +29,7 @@ def start():
     session = data.get('session')
     if not session:
         return jsonify({'ok': False, 'error': 'missing session'}), 400
-    base = current_app.config['SESSIONS_DIR']
+    base = current_app.config['UPLOAD_ROOT']
     sess_dir = ensure_session(base, session)
     input_path = get_input_path(sess_dir)
     if not input_path:
@@ -54,7 +54,7 @@ def start():
 
 @bp.get('/progress/<session>')
 def progress(session):
-    path = progress_path(os.path.join(current_app.config['SESSIONS_DIR'], session))
+    path = progress_path(os.path.join(current_app.config['UPLOAD_ROOT'], session))
     if not os.path.exists(path):
         return jsonify({'status': 'starting', 'pct': 0, 'message': 'Starting…', 'metrics': {}})
     with open(path, 'r', encoding='utf-8') as fh:
@@ -64,7 +64,7 @@ def progress(session):
 
 @bp.get('/download/<session>/<key>')
 def download(session, key):
-    sess_dir = os.path.join(current_app.config['SESSIONS_DIR'], session)
+    sess_dir = os.path.join(current_app.config['UPLOAD_ROOT'], session)
     manifest = load_manifest(sess_dir)
     if key not in manifest:
         return ('', 404)

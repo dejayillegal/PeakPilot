@@ -19,7 +19,7 @@ def upload():
 
     session = request.form.get('session') or generate_session()
     reset = request.form.get('reset') == '1'
-    base = current_app.config['SESSIONS_DIR']
+    base = current_app.config['UPLOAD_ROOT']
     sess_dir = ensure_session(base, session)
     if reset:
         clear_session(sess_dir)
