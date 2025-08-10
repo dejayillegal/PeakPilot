@@ -27,7 +27,6 @@ const curEl = document.getElementById('cur');
 const durEl = document.getElementById('dur');
 const previewSource = document.getElementById('previewSource');
 const abOrig = document.getElementById('abOriginal');
-const abProc = document.getElementById('abProcessed');
 
 const result = document.getElementById('result');
 const dlClub = document.getElementById('dlClub');
@@ -104,27 +103,23 @@ function gainForI(I, targetRef){
 function updateMetrics(j){
   lastMetrics = j;
   if (j.timeline) drawTimelineOverlay(j.timeline);
-  if (!j.metrics) return;
+  if (!metricsPanel || !j.metrics) return;
 
   metricsPanel.classList.remove('hidden');
-  // Club
   const ci = j.metrics?.club?.input || {}, co = j.metrics?.club?.output || {};
   setIf('club_in_I', ci.I); setIf('club_in_TP', ci.TP); setIf('club_in_LRA', ci.LRA); setIf('club_in_TH', ci.threshold);
   setIf('club_out_I', co.I); setIf('club_out_TP', co.TP); setIf('club_out_LRA', co.LRA); setIf('club_out_TH', co.threshold);
-  // Streaming
   const si = j.metrics?.streaming?.input || {}, so = j.metrics?.streaming?.output || {};
   setIf('str_in_I', si.I); setIf('str_in_TP', si.TP); setIf('str_in_LRA', si.LRA); setIf('str_in_TH', si.threshold);
   setIf('str_out_I', so.I); setIf('str_out_TP', so.TP); setIf('str_out_LRA', so.LRA); setIf('str_out_TH', so.threshold);
-  // Premaster
   const pi = j.metrics?.premaster?.input || {}, po = j.metrics?.premaster?.output || {};
   setIf('pre_in_P', pi.peak_dbfs); setIf('pre_out_P', po.peak_dbfs);
-  // Custom
-  if (j.metrics?.custom){
+  if (j.metrics?.custom && customMetrics){
     const ci2 = j.metrics.custom.input || {}, co2 = j.metrics.custom.output || {};
     setIf('cus_in_I', ci2.I); setIf('cus_in_TP', ci2.TP); setIf('cus_in_LRA', ci2.LRA); setIf('cus_in_TH', ci2.threshold);
     setIf('cus_out_I', co2.I); setIf('cus_out_TP', co2.TP); setIf('cus_out_LRA', co2.LRA); setIf('cus_out_TH', co2.threshold);
     customMetrics.classList.remove('hidden');
-  } else {
+  } else if (customMetrics) {
     customMetrics.classList.add('hidden');
   }
 }
@@ -167,6 +162,8 @@ async function startJob(file, blobUrl){
   const r = await fetch('/start', { method:'POST', body: fd });
   if (!r.ok) { alert('Failed to start: ' + (await r.text())); return; }
   const { session, progress_url } = await r.json();
+  window.PeakPilot = window.PeakPilot || {};
+  window.PeakPilot.session = session;
   poll(progress_url, blobUrl, session);
 }
 
@@ -195,43 +192,22 @@ async function poll(url, originalBlobUrl, session){
     try{
       const r = await fetch(url, { cache: 'no-store' });
       const j = await r.json();
+      setAnalyzeProgress(j.percent);
+      if (j.phase || j.message) setAnalyzeState(j.phase || j.message);
+      updateMetrics(j);
 
-        setAnalyzeProgress(j.percent);
-        if (j.phase || j.message) setAnalyzeState(j.phase || j.message);
-        updateMetrics(j);
-
-        if (j.done) {
-          clearInterval(polling);
-          showAnalyzingModal(false);
-          result.classList.remove('hidden');
-        dlClub.href = j.downloads.club;
-        dlStreaming.href = j.downloads.streaming;
-        dlPremaster.href = j.downloads.premaster;
-        dlZip.href = j.downloads.zip;
-        dlSession.href = j.downloads.session_json;
-
-        if (j.downloads.custom){
-          dlCustom.href = j.downloads.custom;
-          dlCustom.style.display = '';
-          pvCustom.style.display = '';
+      if (j.done) {
+        clearInterval(polling);
+        showAnalyzingModal(false);
+        if (window.renderUploadedAudioCanvas) {
+          window.renderUploadedAudioCanvas(session);
         }
-
-        const gains = setABGains(j);
-        loadIntoWave(j.downloads.club, 'Club', gains.club);
-        pvClub.onclick = ()=> loadIntoWave(j.downloads.club, 'Club', gains.club);
-        pvStreaming.onclick = ()=> loadIntoWave(j.downloads.streaming, 'Streaming', gains.streaming);
-        pvPremaster.onclick = ()=> loadIntoWave(j.downloads.premaster, 'Unlimited Premaster', gains.premaster || 1.0);
-        if (j.downloads.custom) pvCustom.onclick = ()=> loadIntoWave(j.downloads.custom, 'Custom', gains.custom);
-
-        abOrig.onclick = ()=> loadIntoWave(originalBlobUrl, 'Original', gains.original || 1.0);
-        abProc.onclick = ()=> loadIntoWave(j.downloads.club || j.downloads.streaming, 'Processed', (gains.club || gains.streaming || 1.0));
-
         if (window.renderMasteringResults) {
           window.renderMasteringResults(session, [
             {
               id: "club",
               title: "Club (48k/24, target −7.2 LUFS, −0.8 dBTP)",
-              processedUrl: `/download/${session}/club_master.wav`,
+              processedUrl: `/download/${session}/${encodeURIComponent("club_master.wav")}`,
               wavKey: "club_master.wav",
               infoKey: "club_info.json",
               metrics: { labelRow:["LUFS-I","TP","LRA","Thresh"], input:["-17.19","-5.60","27.24","-60.00"], output:["-7.40","0.00","27.24","—"] }
@@ -239,7 +215,7 @@ async function poll(url, originalBlobUrl, session){
             {
               id: "stream",
               title: "Streaming (44.1k/24, target −9.5 LUFS, −1.0 dBTP)",
-              processedUrl: `/download/${session}/stream_master.wav`,
+              processedUrl: `/download/${session}/${encodeURIComponent("stream_master.wav")}`,
               wavKey: "stream_master.wav",
               infoKey: "stream_info.json",
               metrics: { labelRow:["LUFS-I","TP","LRA","Thresh"], input:["-17.19","-5.60","27.24","-60.00"], output:["-9.52","0.00","27.24","—"] }
@@ -247,20 +223,12 @@ async function poll(url, originalBlobUrl, session){
             {
               id: "unlimited",
               title: "Unlimited Premaster (48k/24, peak −6 dBFS)",
-              processedUrl: `/download/${session}/premaster_unlimited.wav`,
+              processedUrl: `/download/${session}/${encodeURIComponent("premaster_unlimited.wav")}`,
               wavKey: "premaster_unlimited.wav",
               infoKey: "premaster_unlimited_info.json",
               metrics: { labelRow:["Peak dBFS"], input:["-5.60"], output:["-6.00"] }
-            },
-            {
-              id: "custom",
-              title: "Custom (service preset)",
-              processedUrl: `/download/${session}/custom_master.wav`,
-              wavKey: "custom_master.wav",
-              infoKey: "custom_info.json",
-              metrics: { labelRow:["LUFS-I","TP","LRA","Thresh"], input:["—","—","—","—"], output:["—","—","—","—"] }
             }
-          ], { showCustom: !!j.downloads.custom });
+          ], { showCustom: false });
         }
       }
     }catch(e){ /* ignore transient errors */ }

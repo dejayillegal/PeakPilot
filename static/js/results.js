@@ -40,6 +40,11 @@
         this.buffer = await getAC().decodeAudioData(arr);
         this.render();
       } catch (e) {
+        if (!this._retried) {
+          this._retried = 1;
+          setTimeout(() => this.load(), 2000);
+          return;
+        }
         console.warn('preview failed', e);
         this.canvas.parentElement.textContent = 'Preview unavailable';
         this.btn.disabled = true;
@@ -252,8 +257,8 @@
     art.appendChild(buildMetricsTable(cfg.metrics));
 
     const downloads = document.createElement('div'); downloads.className = 'pp-downloads';
-    const wav = document.createElement('a'); wav.className = 'pp-dl'; wav.href = `/download/${session}/${cfg.wavKey}`; wav.appendChild(iconDownload()); wav.appendChild(document.createTextNode(' Download WAV'));
-    const info = document.createElement('a'); info.className = 'pp-dl'; info.href = `/download/${session}/${cfg.infoKey}`; info.appendChild(iconDownload()); info.appendChild(document.createTextNode(' Download INFO'));
+    const wav = document.createElement('a'); wav.className = 'pp-dl'; wav.href = `/download/${session}/${encodeURIComponent(cfg.wavKey)}`; wav.appendChild(iconDownload()); wav.appendChild(document.createTextNode(' Download WAV'));
+    const info = document.createElement('a'); info.className = 'pp-dl'; info.href = `/download/${session}/${encodeURIComponent(cfg.infoKey)}`; info.appendChild(iconDownload()); info.appendChild(document.createTextNode(' Download INFO'));
     downloads.appendChild(wav); downloads.appendChild(info); art.appendChild(downloads);
 
     new WaveformPlayer(btn, canvas, cfg.processedUrl);

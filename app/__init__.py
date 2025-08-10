@@ -1,5 +1,5 @@
 import os, uuid, threading, json
-from flask import Flask, request, jsonify, send_from_directory, render_template, make_response
+from flask import Flask, request, jsonify, render_template, make_response, send_file
 
 from .pipeline import run_pipeline, new_session_dir, write_json_atomic, progress_path, ffprobe_ok
 def create_app():
@@ -101,13 +101,29 @@ def create_app():
         resp.headers["Cache-Control"] = "no-store, max-age=0"
         return resp
 
-    @app.get("/download/<session>/<path:filename>")
-    def download(session, filename):
-        sess_dir = os.path.join(app.config["UPLOAD_FOLDER"], session)
-        safe = os.path.abspath(sess_dir)
-        if not os.path.abspath(os.path.join(sess_dir, filename)).startswith(safe):
-            return jsonify({"error": "Invalid path"}), 400
-        return send_from_directory(sess_dir, filename, as_attachment=True)
+    from .util_fs import session_root, read_manifest, sha256sum
+
+    @app.get("/download/<session>/<key>")
+    def download(session, key):
+        root = session_root(app.config["UPLOAD_FOLDER"], session)
+        try:
+            mf = read_manifest(root)
+        except Exception:
+            return ("Unknown file key", 404)
+        meta = mf.get(key)
+        if not meta:
+            return ("Unknown file key", 404)
+        f = root / meta.get("filename", key)
+        if not f.exists():
+            return ("File missing", 404)
+        if sha256sum(f) != meta.get("sha256"):
+            return ("Checksum mismatch", 409)
+        return send_file(
+            f,
+            as_attachment=True,
+            download_name=f.name,
+            mimetype=meta.get("type", "application/octet-stream"),
+        )
 
     return app
 
