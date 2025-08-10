@@ -1,161 +1,55 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <title>PeakPilot — Master in One Click</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
-  <script src="https://unpkg.com/wavesurfer.js@7"></script>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>PeakPilot</title>
+  <link rel="stylesheet" href="/static/css/app.css"/>
 </head>
-<body>
-<header class="site-header">
-  <div class="brand">
-    <img src="{{ url_for('static', filename='brand/peakpilot-logo.png') }}" alt="PeakPilot" class="logo">
-    <span class="logotype">PeakPilot</span>
+<body class="pp-dark">
+  <header class="pp-header">
+    <img src="/static/brand/peakpilot-logo.png" alt="PeakPilot" class="pp-logo"/>
+    <h1>PeakPilot Mastering</h1>
+  </header>
+
+  <main class="pp-main">
+    <form id="upload-form">
+      <input id="file-input" type="file" name="audio" accept="audio/*" required />
+      <button id="analyze-btn" type="submit">Analyze → Master</button>
+    </form>
+
+    <section id="original-section" class="track-section">
+      <h2>Original</h2>
+      <div class="wf-row">
+        <div id="wf-original" class="wf"></div>
+        <button class="wf-btn" data-wf="original" aria-pressed="false" title="Play/Pause"></button>
+      </div>
+      <canvas id="timeline-canvas" class="timeline"></canvas>
+    </section>
+
+    <section id="outputs-section" class="outputs"></section>
+  </main>
+
+  <!-- Popup Modal -->
+  <div id="pp-modal" class="pp-modal" hidden>
+    <div class="pp-card">
+      <div class="pp-card-head">
+        <h3>Analyzing your mix…</h3>
+        <p>Measuring loudness, peaks and dynamics to set safe targets. Your master preview will be ready shortly; you can fine-tune to taste afterwards.</p>
+      </div>
+      <div class="pp-orb-wrap">
+        <canvas id="pp-orb"></canvas>
+        <div class="pp-orb-fallback"></div>
+      </div>
+      <div class="pp-progress">
+        <div id="pp-bar" class="bar indeterminate"></div>
+        <div id="pp-stage" class="stage">Starting…</div>
+        <div id="pp-flavor" class="flavor"></div>
+      </div>
+    </div>
   </div>
-</header>
 
-<main class="wrap">
-  <section class="hero card">
-    <h1>Master your track</h1>
-    <p class="muted">Upload once → get <strong>Club</strong>, <strong>Streaming</strong>, and <strong>Unlimited Premaster</strong>. Optional <strong>custom</strong> master via service preset.</p>
-
-    <details id="advanced" class="options">
-      <summary>Advanced</summary>
-      <div class="row">
-        <label>Preset</label>
-        <select id="preset" name="preset">
-          {% for p in presets %}
-          <option value="{{p}}">{{p}}</option>
-          {% endfor %}
-        </select>
-        <label>Bits</label>
-        <select id="bits" name="bits">
-          <option value="24" selected>24</option>
-          <option value="16">16</option>
-        </select>
-        <label>Dither</label>
-        <select id="dither" name="dither">
-          <option value="">none</option>
-          <option value="triangular">triangular</option>
-          <option value="rectangular">rectangular</option>
-          <option value="shibata">shibata</option>
-        </select>
-        <label>Trim</label><input id="trim" type="checkbox" checked>
-        <label>Pad (ms)</label><input id="pad_ms" type="number" min="0" max="1000" value="100">
-        <label>Smart limiter</label><input id="smart_limiter" type="checkbox">
-      </div>
-    </details>
-
-    <div id="drop" class="dropzone" tabindex="0">
-      <input id="file" type="file" accept=".wav,.mp3,.flac,.aiff,.aif,.aac,.m4a,.ogg,.oga,.opus" hidden>
-      <div class="dz-inner">
-        <p><strong>Drop your audio here</strong> or <button id="pick" type="button" class="linklike">choose a file</button></p>
-        <p class="tiny muted">Up to 512 MB · WAV/MP3/FLAC/AIFF/AAC/OGG…</p>
-      </div>
-    </div>
-
-    <div class="buttons"><button id="analyze" class="btn" disabled>Analyze</button></div>
-
-    <!-- Waveform + overlays -->
-    <div id="preview" class="preview hidden card subtle">
-      <div class="player">
-        <button id="play" class="btn play">Play</button>
-        <div class="time"><span id="cur">0:00</span> / <span id="dur">0:00</span></div>
-        <div class="ab"><button id="abOriginal" class="btn ghost">Original</button><button id="abProcessed" class="btn ghost">Processed</button></div>
-      </div>
-      <div id="waveWrap">
-        <div id="waveform"></div>
-        <canvas id="loudCanvas" height="60"></canvas>
-      </div>
-      <div class="preview-source muted tiny" id="previewSource">Preview: Original upload</div>
-    </div>
-
-    <div id="metrics" class="metrics card subtle hidden">
-        <h4>Measured metrics</h4>
-        <div class="grid">
-          <div>
-            <h5>Club (48k/24, target −7.2 LUFS, −0.8 dBTP)</h5>
-            <table class="tbl">
-              <thead><tr><th></th><th>LUFS-I</th><th>TP</th><th>LRA</th><th>Thresh</th></tr></thead>
-              <tbody>
-                <tr><td>Input</td><td id="club_in_I">—</td><td id="club_in_TP">—</td><td id="club_in_LRA">—</td><td id="club_in_TH">—</td></tr>
-                <tr><td>Output</td><td id="club_out_I">—</td><td id="club_out_TP">—</td><td id="club_out_LRA">—</td><td id="club_out_TH">—</td></tr>
-              </tbody>
-            </table>
-          </div>
-          <div>
-            <h5>Streaming (44.1k/24, target −9.5 LUFS, −1.0 dBTP)</h5>
-            <table class="tbl">
-              <thead><tr><th></th><th>LUFS-I</th><th>TP</th><th>LRA</th><th>Thresh</th></tr></thead>
-              <tbody>
-                <tr><td>Input</td><td id="str_in_I">—</td><td id="str_in_TP">—</td><td id="str_in_LRA">—</td><td id="str_in_TH">—</td></tr>
-                <tr><td>Output</td><td id="str_out_I">—</td><td id="str_out_TP">—</td><td id="str_out_LRA">—</td><td id="str_out_TH">—</td></tr>
-              </tbody>
-            </table>
-          </div>
-          <div>
-            <h5>Unlimited Premaster (48k/24, peak −6 dBFS)</h5>
-            <table class="tbl">
-              <thead><tr><th></th><th>Peak dBFS</th></tr></thead>
-              <tbody>
-                <tr><td>Input</td><td id="pre_in_P">—</td></tr>
-                <tr><td>Output</td><td id="pre_out_P">—</td></tr>
-              </tbody>
-            </table>
-          </div>
-          <div id="customMetrics" class="hidden">
-            <h5>Custom (service preset)</h5>
-            <table class="tbl">
-              <thead><tr><th></th><th>LUFS-I</th><th>TP</th><th>LRA</th><th>Thresh</th></tr></thead>
-              <tbody>
-                <tr><td>Input</td><td id="cus_in_I">—</td><td id="cus_in_TP">—</td><td id="cus_in_LRA">—</td><td id="cus_in_TH">—</td></tr>
-                <tr><td>Output</td><td id="cus_out_I">—</td><td id="cus_out_TP">—</td><td id="cus_out_LRA">—</td><td id="cus_out_TH">—</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-    <div id="modal" class="modal hidden">
-      <div class="modal-inner card subtle">
-        <div class="orb-hero">
-          <canvas id="orb" width="160" height="160"></canvas>
-          <div class="orb-fallback" aria-hidden="true"></div>
-        </div>
-        <p class="tiny muted">Your master preview will be ready shortly and adjustments can be made to taste afterwards.</p>
-        <div id="progressWrap" class="progress-wrap">
-          <div class="progress-label">
-            <span id="phase">Starting…</span>
-            <span id="percent"></span>
-          </div>
-          <div class="progressbar"><div id="bar" class="indeterminate"></div></div>
-          <ul id="messages" class="messages"></ul>
-        </div>
-      </div>
-    </div>
-
-    <div id="result" class="result hidden">
-      <h3>Your masters are ready</h3>
-      <div class="buttons">
-        <a id="dlClub" class="btn" href="#">Club WAV</a>
-        <a id="dlStreaming" class="btn" href="#">Streaming WAV</a>
-        <a id="dlPremaster" class="btn" href="#">Unlimited Premaster WAV</a>
-        <a id="dlCustom" class="btn" href="#" style="display:none">Custom (Preset) WAV</a>
-        <a id="dlZip" class="btn" href="#">ZIP (All)</a>
-        <a id="dlSession" class="btn" href="#">session.json</a>
-      </div>
-
-      <div class="buttons tiny">
-        <button id="pvClub" class="btn ghost">Preview Club</button>
-        <button id="pvStreaming" class="btn ghost">Preview Streaming</button>
-        <button id="pvPremaster" class="btn ghost">Preview Premaster</button>
-        <button id="pvCustom" class="btn ghost" style="display:none">Preview Custom</button>
-      </div>
-    </div>
-  </section>
-</main>
-
-<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+  <script src="/static/js/wavesurfer.min.js"></script>
+  <script src="/static/js/app.js"></script>
 </body>
 </html>

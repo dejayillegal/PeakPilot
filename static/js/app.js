@@ -1,310 +1,238 @@
-// DOM refs
-const pick = document.getElementById('pick');
-const fileInput = document.getElementById('file');
-const drop = document.getElementById('drop');
+// Minimal utilities
+const $ = (q, el=document)=> el.querySelector(q);
+const $$ = (q, el=document)=> Array.from(el.querySelectorAll(q));
+const clamp = (a,b,x)=> Math.max(a, Math.min(b, x));
 
-const presetSel = document.getElementById('preset');
-const bitsSel = document.getElementById('bits');
-const ditherSel = document.getElementById('dither');
-const trimChk = document.getElementById('trim');
-const padInput = document.getElementById('pad_ms');
-const smartChk = document.getElementById('smart_limiter');
+// Icons
+const PLAY_SVG = '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>';
+const PAUSE_SVG = '<svg viewBox="0 0 24 24"><path d="M6 5h4v14H6zm8 0h4v14h-4z"/></svg>';
 
-const analyzeBtn = document.getElementById('analyze');
-const modal = document.getElementById('modal');
-const progressWrap = document.getElementById('progressWrap');
-const bar = document.getElementById('bar');
-const phase = document.getElementById('phase');
-const percent = document.getElementById('percent');
-const messages = document.getElementById('messages');
+// WaveSurfer manager
+const WS = {}; // id -> wavesurfer (or audio fallback)
+let currentId = null;
 
-(function breatheOrb(){
-  const c = document.getElementById('orb');
-  if (!c || !c.getContext) return; // CSS fallback will show
-  const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
-  const cssW = c.width, cssH = c.height;
-  c.width = cssW * dpr; c.height = cssH * dpr; c.style.width = cssW + 'px'; c.style.height = cssH + 'px';
-  const ctx = c.getContext('2d');
-  ctx.scale(dpr, dpr);
-
-  const W = cssW, H = cssH, CX = W/2, CY = H/2;
-  const BASE_R = 56, DOTS = 110;
-  const dots = Array.from({length: DOTS}, (_,i)=>({
-    a:(i/DOTS)*Math.PI*2,
-    r: BASE_R + 16*Math.random(),
-    s: 0.7 + Math.random()*0.8,
-    p: Math.random()*Math.PI*2,
-    o: 0.25 + Math.random()*0.45
-  }));
-  let last = performance.now();
-
-  function tick(now){
-    const dt = (now - last)/1000; last = now;
-    const t = now/1000;
-
-    const breath = 1 + 0.05*Math.sin(t*0.9);
-    ctx.clearRect(0,0,W,H);
-
-    const grd = ctx.createRadialGradient(CX, CY, 8, CX, CY, 120);
-    grd.addColorStop(0, 'rgba(31,241,233,.26)');
-    grd.addColorStop(1, 'rgba(31,241,233,0)');
-    ctx.fillStyle = grd; ctx.beginPath(); ctx.arc(CX,CY,110,0,Math.PI*2); ctx.fill();
-
-    ctx.beginPath();
-    ctx.fillStyle = 'rgba(31,241,233,.78)';
-    ctx.arc(CX, CY, 32*breath, 0, Math.PI*2); ctx.fill();
-
-    ctx.beginPath();
-    ctx.strokeStyle = 'rgba(31,241,233,.25)';
-    ctx.lineWidth = 2;
-    ctx.arc(CX, CY, 64*breath, 0, Math.PI*2); ctx.stroke();
-
-    dots.forEach(d=>{
-      d.p += dt * d.s;
-      const R = (d.r + 8*Math.sin(d.p*1.1)) * breath;
-      const x = CX + Math.cos(d.a + d.p*0.09) * R;
-      const y = CY + Math.sin(d.a + d.p*0.09) * R;
-      ctx.beginPath();
-      ctx.fillStyle = `rgba(31,241,233,${d.o + 0.25*Math.sin(d.p*1.7)})`;
-      ctx.arc(x, y, 1.4 + 0.9*Math.sin(d.p*1.3), 0, Math.PI*2);
-      ctx.fill();
-    });
-
-    requestAnimationFrame(tick);
-  }
-  requestAnimationFrame(tick);
-})();
-
-const preview = document.getElementById('preview');
-const playBtn = document.getElementById('play');
-const curEl = document.getElementById('cur');
-const durEl = document.getElementById('dur');
-const previewSource = document.getElementById('previewSource');
-const abOrig = document.getElementById('abOriginal');
-const abProc = document.getElementById('abProcessed');
-
-const result = document.getElementById('result');
-const dlClub = document.getElementById('dlClub');
-const dlStreaming = document.getElementById('dlStreaming');
-const dlPremaster = document.getElementById('dlPremaster');
-const dlCustom = document.getElementById('dlCustom');
-const dlZip = document.getElementById('dlZip');
-const dlSession = document.getElementById('dlSession');
-
-const pvClub = document.getElementById('pvClub');
-const pvStreaming = document.getElementById('pvStreaming');
-const pvPremaster = document.getElementById('pvPremaster');
-const pvCustom = document.getElementById('pvCustom');
-
-const metricsPanel = document.getElementById('metrics');
-const customMetrics = document.getElementById('customMetrics');
-const loudCanvas = document.getElementById('loudCanvas');
-const loudCtx = loudCanvas.getContext('2d');
-
-let polling = null;
-let wave = null;
-let lastMessage = "";
-let lastMetrics = null;
-
-let currentLabel = 'Original';
-let currentGain = 1.0;   // for A/B gain-match
-let selectedFile = null;
-let selectedBlobUrl = null;
-
-// --- utils ---
-function t(sec){
-  if(!isFinite(sec)) return "0:00";
-  const m = Math.floor(sec/60), s = Math.floor(sec%60);
-  return `${m}:${s.toString().padStart(2,'0')}`;
-}
-function appendMessage(msg){ if(!msg || msg === lastMessage) return; lastMessage = msg; const li = document.createElement('li'); li.textContent = msg; messages.appendChild(li); }
-function setProgress(p, ph, msg){
-  if (typeof p === 'number' && p >= 0){
-    bar.classList.remove('indeterminate');
-    bar.style.width = p + '%';
-    percent.textContent = p + '%';
-  }else{
-    bar.classList.add('indeterminate');
-    percent.textContent = '';
-  }
-  phase.textContent = ph || '';
-  if (msg) appendMessage(msg);
-}
-function setIf(id, v){ const el = document.getElementById(id); if(!el) return; el.textContent = (v==null? '—' : (typeof v === 'number' ? v.toFixed(2) : v)); }
-
-function makeWaveform(){
-  if (wave) { wave.destroy(); wave = null; }
-  const width = document.getElementById('waveWrap').clientWidth;
-  loudCanvas.width = width;
-  wave = WaveSurfer.create({
-    container: '#waveform',
-    height: 120,
-    waveColor: 'rgba(31,241,233,0.35)',
-    progressColor: 'rgba(108,248,255,0.9)',
-    cursorColor: '#fff',
-    barWidth: 2, barRadius: 1, barGap: 1,
-    normalize: true, responsive: true,
-  });
-  wave.on('ready', ()=>{ durEl.textContent = t(wave.getDuration()); wave.setVolume(currentGain); drawTimelineOverlay(lastMetrics?.timeline || null); });
-  wave.on('audioprocess', ()=>{ curEl.textContent = t(wave.getCurrentTime()); });
-  wave.on('seek', ()=>{ curEl.textContent = t(wave.getCurrentTime()); });
-  wave.on('finish', ()=>{ playBtn.textContent = 'Play'; });
-}
-
-function loadIntoWave(srcUrl, label, matchGain=null){
-  currentLabel = label;
-  if (matchGain != null) currentGain = matchGain;
-  preview.classList.remove('hidden');
-  previewSource.textContent = 'Preview: ' + label;
-  makeWaveform();
-  wave.load(srcUrl);
-  playBtn.textContent = 'Play';
-}
-
-function gainForI(I, targetRef){
-  if (I == null || !isFinite(I)) return 1.0;
-  const deltaDb = targetRef - I;             // positive means boost, negative means cut
-  const lin = Math.pow(10, deltaDb/20);
-  return Math.max(0.1, Math.min(2.5, lin));  // clamp sane range
-}
-
-function updateMetrics(j){
-  lastMetrics = j;
-  if (j.timeline) drawTimelineOverlay(j.timeline);
-  if (!j.metrics) return;
-
-  metricsPanel.classList.remove('hidden');
-  // Club
-  const ci = j.metrics?.club?.input || {}, co = j.metrics?.club?.output || {};
-  setIf('club_in_I', ci.I); setIf('club_in_TP', ci.TP); setIf('club_in_LRA', ci.LRA); setIf('club_in_TH', ci.threshold);
-  setIf('club_out_I', co.I); setIf('club_out_TP', co.TP); setIf('club_out_LRA', co.LRA); setIf('club_out_TH', co.threshold);
-  // Streaming
-  const si = j.metrics?.streaming?.input || {}, so = j.metrics?.streaming?.output || {};
-  setIf('str_in_I', si.I); setIf('str_in_TP', si.TP); setIf('str_in_LRA', si.LRA); setIf('str_in_TH', si.threshold);
-  setIf('str_out_I', so.I); setIf('str_out_TP', so.TP); setIf('str_out_LRA', so.LRA); setIf('str_out_TH', so.threshold);
-  // Premaster
-  const pi = j.metrics?.premaster?.input || {}, po = j.metrics?.premaster?.output || {};
-  setIf('pre_in_P', pi.peak_dbfs); setIf('pre_out_P', po.peak_dbfs);
-  // Custom
-  if (j.metrics?.custom){
-    const ci2 = j.metrics.custom.input || {}, co2 = j.metrics.custom.output || {};
-    setIf('cus_in_I', ci2.I); setIf('cus_in_TP', ci2.TP); setIf('cus_in_LRA', ci2.LRA); setIf('cus_in_TH', ci2.threshold);
-    setIf('cus_out_I', co2.I); setIf('cus_out_TP', co2.TP); setIf('cus_out_LRA', co2.LRA); setIf('cus_out_TH', co2.threshold);
-    customMetrics.classList.remove('hidden');
-  } else {
-    customMetrics.classList.add('hidden');
-  }
-}
-
-function drawTimelineOverlay(tl){
-  const ctx = loudCtx;
-  const canvas = loudCanvas;
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-  if (!tl || !tl.sec || tl.sec.length === 0) return;
-
-  const W = canvas.width, H = canvas.height;
-  const minL = Math.min(...tl.short_term, -30), maxL = Math.max(...tl.short_term, 0);
-  const n = tl.sec.length;
-  const step = Math.max(1, Math.floor(n / W)); // one px per sample approx
-
-  for (let x=0, i=0; i<n; i+=step, x++){
-    const lufs = tl.short_term[i];
-    const y = H - ((lufs - minL) / (maxL - minL)) * H;
-    ctx.fillStyle = 'rgba(31,241,233,0.35)';
-    ctx.fillRect(x, y, 1, H - y);
-    if (tl.tp_flags[i]) {
-      ctx.fillStyle = 'rgba(255,80,80,0.9)';
-      ctx.fillRect(x, 0, 1, 6);
-    }
-  }
-}
-
-async function startJob(file, blobUrl){
-  // send with options
-  const fd = new FormData();
-  fd.append('audio', file);
-  fd.append('preset', presetSel.value);
-  fd.append('bits', bitsSel.value);
-  fd.append('dither', ditherSel.value);
-  fd.append('trim', trimChk.checked ? 'true' : 'false');
-  fd.append('pad_ms', padInput.value || '100');
-  fd.append('smart_limiter', smartChk.checked ? 'true' : 'false');
-  fd.append('do_trim_pad', 'true');
-
-  const r = await fetch('/start', { method:'POST', body: fd });
-  if (!r.ok) { alert('Failed to start: ' + (await r.text())); return; }
-  const { session, progress_url } = await r.json();
-  poll(progress_url, blobUrl);
-}
-
-function setABGains(metrics){
-  // Use advisor.input_I as reference; otherwise -14 LUFS
-  const refI = metrics?.metrics?.advisor?.input_I ?? -14.0;
-
-  const srcI = metrics?.metrics?.advisor?.input_I; // original
-  const clubI = metrics?.metrics?.club?.output?.I;
-  const strI  = metrics?.metrics?.streaming?.output?.I;
-  const preI  = metrics?.metrics?.premaster?.output?.I; // may be undefined; ignore
-  const cusI  = metrics?.metrics?.custom?.output?.I;
-
+function audioFallback(container, url) {
+  const audio = new Audio(url);
+  audio.controls = false;
+  container.innerHTML = '';
+  container.appendChild(audio);
   return {
-    original: gainForI(srcI, refI),
-    club:     gainForI(clubI, refI),
-    streaming:gainForI(strI, refI),
-    premaster:gainForI(preI, refI),
-    custom:   gainForI(cusI, refI)
+    load: ()=>{},
+    on: ()=>{},
+    setVolume: (v)=> { audio.volume = clamp(0,1,v); },
+    isPlaying: ()=> !audio.paused,
+    play: ()=> audio.play(),
+    pause: ()=> audio.pause()
   };
 }
 
-async function poll(url, originalBlobUrl){
-  clearInterval(polling);
-  polling = setInterval(async ()=>{
-    try{
-      const r = await fetch(url, { cache: 'no-store' });
-      const j = await r.json();
-
-      setProgress(j.percent, j.phase, j.message);
-      updateMetrics(j);
-
-      if (j.done) {
-        clearInterval(polling);
-        modal.classList.add('hidden');
-        result.classList.remove('hidden');
-        dlClub.href = j.downloads.club;
-        dlStreaming.href = j.downloads.streaming;
-        dlPremaster.href = j.downloads.premaster;
-        dlZip.href = j.downloads.zip;
-        dlSession.href = j.downloads.session_json;
-
-        if (j.downloads.custom){
-          dlCustom.href = j.downloads.custom;
-          dlCustom.style.display = '';
-          pvCustom.style.display = '';
-        }
-
-        const gains = setABGains(j);
-        loadIntoWave(j.downloads.club, 'Club', gains.club);
-        pvClub.onclick = ()=> loadIntoWave(j.downloads.club, 'Club', gains.club);
-        pvStreaming.onclick = ()=> loadIntoWave(j.downloads.streaming, 'Streaming', gains.streaming);
-        pvPremaster.onclick = ()=> loadIntoWave(j.downloads.premaster, 'Unlimited Premaster', gains.premaster || 1.0);
-        if (j.downloads.custom) pvCustom.onclick = ()=> loadIntoWave(j.downloads.custom, 'Custom', gains.custom);
-
-        abOrig.onclick = ()=> loadIntoWave(originalBlobUrl, 'Original', gains.original || 1.0);
-        abProc.onclick = ()=> loadIntoWave(j.downloads.club || j.downloads.streaming, 'Processed', (gains.club || gains.streaming || 1.0));
-      }
-    }catch(e){ /* ignore transient errors */ }
-  }, 1000);
+function initWaveform(id, el, url, vol=1.0){
+  let ws;
+  if (window.WaveSurfer) {
+    ws = WaveSurfer.create({ container: el, barWidth: 2, height: 84, cursorWidth: 1 });
+    ws.load(url);
+    ws.on('ready', ()=> ws.setVolume(vol));
+    ws.on('play',  ()=> updateButtons(id, true));
+    ws.on('pause', ()=> updateButtons(id, false));
+  } else {
+    ws = audioFallback(el, url);
+    ws.setVolume(vol);
+  }
+  WS[id] = ws;
 }
 
-// UI wiring
-pick?.addEventListener('click', ()=> fileInput.click());
-drop?.addEventListener('click', ()=> fileInput.click());
-fileInput?.addEventListener('change', ()=>{ const f=fileInput.files[0]; if(f){ selectedFile=f; selectedBlobUrl=URL.createObjectURL(f); messages.innerHTML=''; loadIntoWave(selectedBlobUrl,'Original',1.0); analyzeBtn.disabled=false; }});
-['dragenter','dragover'].forEach(ev => drop.addEventListener(ev, e=>{ e.preventDefault(); drop.classList.add('drag'); }));
-['dragleave','drop'].forEach(ev => drop.addEventListener(ev, e=>{ e.preventDefault(); drop.classList.remove('drag'); }));
-drop.addEventListener('drop', e=>{ e.preventDefault(); const f=e.dataTransfer.files[0]; if(f){ selectedFile=f; selectedBlobUrl=URL.createObjectURL(f); messages.innerHTML=''; loadIntoWave(selectedBlobUrl,'Original',1.0); analyzeBtn.disabled=false; }});
-analyzeBtn?.addEventListener('click', ()=>{ if(!selectedFile) return; messages.innerHTML=''; modal.classList.remove('hidden'); setProgress(0,'Starting…'); startJob(selectedFile, selectedBlobUrl); });
+function playToggle(id){
+  for (const k in WS){ if (k !== id && !WS[k].isPaused?.() && WS[k].pause) WS[k].pause(); }
+  currentId = id;
+  const w = WS[id];
+  if (!w) return;
+  if (w.isPlaying && w.isPlaying()) { w.pause(); } else { w.play(); }
+}
 
-// Player
-playBtn?.addEventListener('click', ()=>{ if(!wave) return; if (wave.isPlaying()){ wave.pause(); playBtn.textContent='Play'; } else { wave.play(); playBtn.textContent='Pause'; }});
-window.addEventListener('resize', ()=> drawTimelineOverlay(lastMetrics?.timeline || null));
+function updateButtons(activeId, playing){
+  $$('[data-wf]').forEach(btn => {
+    const id = btn.getAttribute('data-wf');
+    btn.setAttribute('aria-pressed', (id===activeId && playing) ? 'true' : 'false');
+    btn.innerHTML = (id===activeId && playing) ? PAUSE_SVG : PLAY_SVG;
+  });
+}
+
+// Orb animation (transparent canvas)
+(function orb(){
+  const c = document.getElementById('pp-orb');
+  const fb = document.querySelector('.pp-orb-fallback');
+  const ctx = c.getContext?.('2d');
+  if (!ctx){ return; }
+  fb.style.display = 'none'; // Hide fallback when canvas works
+  let t = 0; const dots = Array.from({length:64}, (_,i)=>({a:Math.random()*Math.PI*2,r:60+Math.random()*48}));
+  function frame(){
+    const w = c.clientWidth|0, h = c.clientHeight|0; if (c.width!==w||c.height!==h){ c.width=w; c.height=h; }
+    ctx.clearRect(0,0,w,h);
+    ctx.save(); ctx.translate(w/2,h/2);
+    // nucleus
+    const pulse = 28 + Math.sin(t*0.05)*6;
+    const grd = ctx.createRadialGradient(0,0,6, 0,0,pulse*2);
+    grd.addColorStop(0,'#8be9fd'); grd.addColorStop(1,'rgba(139,233,253,0)');
+    ctx.fillStyle=grd; ctx.beginPath(); ctx.arc(0,0,pulse*2,0,Math.PI*2); ctx.fill();
+    // particles
+    dots.forEach((d,i)=>{ const a = d.a + t*0.01*(1+i/64); const r=d.r + Math.sin(t*0.02+i)*2; ctx.fillStyle=`rgba(167,139,250,${0.2+0.6*Math.random()})`; ctx.beginPath(); ctx.arc(Math.cos(a)*r,Math.sin(a)*r,1.8,0,6.28); ctx.fill(); });
+    ctx.restore(); t++; requestAnimationFrame(frame);
+  }
+  frame();
+})();
+
+// Upload & polling
+const form = $('#upload-form');
+const fileInput = $('#file-input');
+const modal = $('#pp-modal');
+const bar = $('#pp-bar');
+const stageEl = $('#pp-stage');
+const flavorEl = $('#pp-flavor');
+const outputs = $('#outputs-section');
+
+let session = null;
+let timer = null;
+let originalURL = null;
+let refI = -14;
+
+form.addEventListener('submit', async (e)=>{
+  e.preventDefault();
+  const file = fileInput.files?.[0];
+  if (!file) return;
+  // Show modal
+  modal.hidden = false;
+  bar.classList.add('indeterminate');
+  stageEl.textContent = 'Starting…';
+  flavorEl.textContent = '';
+
+  // Create original waveform immediately
+  originalURL = URL.createObjectURL(file);
+  initWaveform('original', $('#wf-original'), originalURL, 1.0);
+  $('[data-wf="original"]').innerHTML = PLAY_SVG;
+  $('[data-wf="original"]').addEventListener('click', ()=> playToggle('original'));
+
+  // POST /start
+  const fd = new FormData();
+  fd.append('audio', file);
+  const res = await fetch('/start', { method:'POST', body: fd });
+  const js = await res.json();
+  if (!res.ok){
+    stageEl.textContent = js.error || 'Upload failed';
+    bar.classList.remove('indeterminate');
+    return;
+  }
+  session = js.session;
+  // Poll
+  timer = setInterval(pollProgress, 1000);
+});
+
+async function pollProgress(){
+  const r = await fetch(`/progress/${session}`, { cache:'no-store' });
+  if (!r.ok) return;
+  const p = await r.json();
+
+  // determinate when percent arrives
+  if (typeof p.percent === 'number'){
+    bar.classList.remove('indeterminate');
+    bar.style.width = `${p.percent}%`;
+  }
+  stageEl.textContent = p.message || p.phase;
+
+  const flavors = {
+    analyze: 'Analyzing input…',
+    reference: 'Dialing in reference curve…',
+    club: 'Rendering Club…',
+    streaming: 'Rendering Streaming…',
+    premaster: 'Preparing Unlimited Premaster…',
+    package: 'Packaging downloads…',
+    done: 'Ready'
+  };
+  flavorEl.style.opacity = 0.6;
+  flavorEl.textContent = flavors[p.phase] || '';
+
+  // Timeline overlay for original
+  if (p.timeline && p.timeline.sec?.length){ drawTimeline(p.timeline); }
+
+  // Ref loudness for gain matching
+  if (p.metrics?.advisor?.input_I != null){ refI = p.metrics.advisor.input_I; }
+
+  // Create processed waveforms as they appear
+  addOrUpdateOutput('club', 'Club Master — 48 kHz / 24-bit, −0.8 dBTP, −7.5…−6.5 LUFS-I', p);
+  addOrUpdateOutput('streaming', 'Streaming Master — 44.1 kHz / 24-bit, −1.0 dBTP, −10…−9 LUFS-I', p);
+  addOrUpdateOutput('premaster', 'Unlimited Premaster — 48 kHz / 24-bit, peaks ≈ −6.0 dBFS (no limiter)', p);
+
+  if (p.done){ clearInterval(timer); }
+}
+
+function addOrUpdateOutput(name, title, p){
+  const fname = p.downloads?.[name];
+  const id = `wf-${name}`;
+  let card = document.getElementById(`card-${name}`);
+  if (!card){
+    card = document.createElement('div');
+    card.className = 'output-card';
+    card.id = `card-${name}`;
+    card.innerHTML = `
+      <div class="output-title"><strong>${name[0].toUpperCase()+name.slice(1)}</strong><span>${title}</span></div>
+      <div class="wf-row">
+        <div id="${id}" class="wf"></div>
+        <button class="wf-btn" data-wf="${name}" aria-pressed="false" title="Play/Pause"></button>
+      </div>
+      <div class="metrics" id="metrics-${name}">
+        <div class="cell"><span class="label">Input LUFS-I</span><span class="val" data-k="input_i">—</span></div>
+        <div class="cell"><span class="label">Input LRA</span><span class="val" data-k="input_lra">—</span></div>
+        <div class="cell"><span class="label">Input TP</span><span class="val" data-k="input_tp">—</span></div>
+        <div class="cell"><span class="label">Thresh</span><span class="val" data-k="input_thresh">—</span></div>
+        <div class="cell"><span class="label">Out LUFS-I</span><span class="val" data-k="out_input_i">—</span></div>
+        <div class="cell"><span class="label">Out TP</span><span class="val" data-k="out_input_tp">—</span></div>
+        <div class="cell"><span class="label">SR / Bits</span><span class="val" data-k="sr_bits">—</span></div>
+        <div class="cell"><span class="label">SHA-256</span><span class="val" data-k="sha256">—</span></div>
+      </div>`;
+    outputs.appendChild(card);
+    card.querySelector(`[data-wf="${name}"]`).addEventListener('click', ()=> playToggle(name));
+  }
+  // Populate metrics (incremental)
+  const mIn = p.metrics?.[name]?.input || {};
+  const mOut = p.metrics?.[name]?.output || {};
+  const grid = card.querySelector(`#metrics-${name}`);
+  const set = (k,val)=> grid.querySelector(`[data-k="${k}"]`).textContent = (val!=null && !Number.isNaN(val)) ? String(Math.round(val*10)/10) : '—';
+  set('input_i', mIn.input_i);
+  set('input_lra', mIn.input_lra);
+  set('input_tp', mIn.input_tp);
+  set('input_thresh', mIn.input_thresh);
+  set('out_input_i', mOut.input_i);
+  set('out_input_tp', mOut.input_tp);
+  grid.querySelector('[data-k="sr_bits"]').textContent = (mOut.sr? `${mOut.sr} / ${mOut.bits||'—'}`:'—');
+  grid.querySelector('[data-k="sha256"]').textContent = mOut.sha256||'—';
+
+  // Waveform once file is ready
+  if (fname && !WS[name]){
+    const url = `/download/${session}/${fname}`;
+    // Gain match to advisor input
+    const trackI = mOut.input_i ?? refI;
+    const gain = clamp(0.1, 2.5, Math.pow(10, (refI - trackI)/20));
+    initWaveform(name, document.getElementById(id), url, gain);
+    card.querySelector(`[data-wf="${name}"]`).innerHTML = PLAY_SVG;
+  }
+}
+
+function drawTimeline(t){
+  const c = document.getElementById('timeline-canvas');
+  const ctx = c.getContext('2d');
+  const w = c.clientWidth|0, h = c.clientHeight|0; if (c.width!==w||c.height!==h){ c.width=w; c.height=h; }
+  ctx.clearRect(0,0,w,h);
+  if (!t.sec.length) return;
+  const minL = -40, maxL = -8; // map ST-LUFS range
+  const n = t.sec.length; const barW = Math.max(1, Math.floor(w / n));
+  for (let i=0;i<n;i++){
+    const l = t.short_term[i];
+    const v = clamp(0,1,(l - minL) / (maxL - minL));
+    const hh = Math.max(2, Math.floor(v*h));
+    const x = i*barW; const y = h - hh;
+    ctx.fillStyle = '#2b3344';
+    ctx.fillRect(x, 0, barW-1, h);
+    ctx.fillStyle = '#8be9fd';
+    ctx.fillRect(x, y, barW-1, hh);
+    if (t.tp_flags[i]){ ctx.fillStyle = '#a78bfa'; ctx.fillRect(x, 0, barW-1, 3); }
+  }
+}
