@@ -189,6 +189,11 @@ def normalize_peak_to(src, dst, peak_dbfs=-6.0, sr=48000, bits=24, dither="trian
 
 def run_pipeline(session: str, sess_dir: str, src_path: str, params: Dict[str, Any], stems, gains):
     try:
+        manifest = {}
+        def add_manifest(key, mime):
+            f = Path(sess_dir) / key
+            assert f.exists() and f.stat().st_size > 0, f"Missing output: {key}"
+            manifest[key] = {"filename": key, "type": mime}
         # --- analysis stage -------------------------------------------------
         update_progress(sess_dir, percent=5, phase="analyze", message="Analyzing input…")
         info = ffprobe_info(src_path)
@@ -203,6 +208,7 @@ def run_pipeline(session: str, sess_dir: str, src_path: str, params: Dict[str, A
             ])
         except Exception:
             shutil.copyfile(src_path, Path(sess_dir) / "input_preview.wav")
+        add_manifest("input_preview.wav", "audio/wav")
         ln_in = measure_loudnorm_json(src_path)
         tl = ebur128_timeline(src_path)
         peak_in = measure_peak_dbfs(src_path)
@@ -245,6 +251,11 @@ def run_pipeline(session: str, sess_dir: str, src_path: str, params: Dict[str, A
         info_out = ffprobe_info(club_wav)
         sha = checksum_sha256(club_wav)
         write_json_atomic(os.path.join(sess_dir, "club_info.json"), info_out)
+        with open(os.path.join(sess_dir, "ClubMaster_24b_48k_INFO.txt"), "w", encoding="utf-8") as fh:
+            fh.write(f"Sample rate: {info_out['sr']}\nBits: 24\nLUFS-I: {club_metrics['input_i']:.2f}\nTP: {club_metrics['input_tp']:.2f}\nLRA: {club_metrics['input_lra']:.2f}\n")
+        add_manifest("club_master.wav", "audio/wav")
+        add_manifest("ClubMaster_24b_48k_INFO.txt", "text/plain")
+        add_manifest("club_info.json", "application/json")
         d = read_json(progress_path(sess_dir))
         d["downloads"]["club"] = os.path.basename(club_wav)
         d["metrics"]["club"]["output"] = {
@@ -265,6 +276,11 @@ def run_pipeline(session: str, sess_dir: str, src_path: str, params: Dict[str, A
         info_out = ffprobe_info(streaming_wav)
         sha = checksum_sha256(streaming_wav)
         write_json_atomic(os.path.join(sess_dir, "stream_info.json"), info_out)
+        with open(os.path.join(sess_dir, "StreamingMaster_24b_44k1_INFO.txt"), "w", encoding="utf-8") as fh:
+            fh.write(f"Sample rate: {info_out['sr']}\nBits: 24\nLUFS-I: {str_metrics['input_i']:.2f}\nTP: {str_metrics['input_tp']:.2f}\nLRA: {str_metrics['input_lra']:.2f}\n")
+        add_manifest("stream_master.wav", "audio/wav")
+        add_manifest("StreamingMaster_24b_44k1_INFO.txt", "text/plain")
+        add_manifest("stream_info.json", "application/json")
         d = read_json(progress_path(sess_dir))
         d["downloads"]["streaming"] = os.path.basename(streaming_wav)
         d["metrics"]["streaming"]["output"] = {
@@ -285,26 +301,17 @@ def run_pipeline(session: str, sess_dir: str, src_path: str, params: Dict[str, A
         info_out = ffprobe_info(premaster_wav)
         sha = checksum_sha256(premaster_wav)
         write_json_atomic(os.path.join(sess_dir, "premaster_unlimited_info.json"), info_out)
+        with open(os.path.join(sess_dir, "UnlimitedPremaster_24b_48k_INFO.txt"), "w", encoding="utf-8") as fh:
+            fh.write(f"Sample rate: {info_out['sr']}\nBits: 24\nPeak dBFS: {peak_out:.2f}\n")
+        add_manifest("premaster_unlimited.wav", "audio/wav")
+        add_manifest("UnlimitedPremaster_24b_48k_INFO.txt", "text/plain")
+        add_manifest("premaster_unlimited_info.json", "application/json")
         d = read_json(progress_path(sess_dir))
         d["downloads"]["premaster"] = os.path.basename(premaster_wav)
         d["metrics"]["premaster"]["output"] = {"peak_dbfs": peak_out, "sr": info_out["sr"], "bits": 24, "sha256": sha}
         write_json_atomic(progress_path(sess_dir), d)
 
-        # manifest of outputs
         root = Path(sess_dir)
-        manifest = {}
-        def add(key, mime):
-            f = root / key
-            assert f.exists() and f.stat().st_size > 0, f"Missing output: {key}"
-            manifest[key] = {"filename": key, "type": mime}
-
-        add("input_preview.wav", "audio/wav")
-        add("club_master.wav", "audio/wav"); add("club_info.json", "application/json")
-        add("stream_master.wav", "audio/wav"); add("stream_info.json", "application/json")
-        add("premaster_unlimited.wav", "audio/wav"); add("premaster_unlimited_info.json", "application/json")
-        if (root / "custom_master.wav").exists():
-            add("custom_master.wav", "audio/wav"); add("custom_info.json", "application/json")
-        write_manifest(root, manifest)
 
         # --- package --------------------------------------------------------
         update_progress(sess_dir, percent=95, phase="package", message="Packaging downloads…")
@@ -332,17 +339,26 @@ def run_pipeline(session: str, sess_dir: str, src_path: str, params: Dict[str, A
         write_json_atomic(session_json_path, session_json)
         d["downloads"]["session_json"] = os.path.basename(session_json_path)
         write_json_atomic(progress_path(sess_dir), d)
+        add_manifest("session.json", "application/json")
 
         # zip files
-        zip_path = os.path.join(sess_dir, "bundle.zip")
+        zip_path = os.path.join(sess_dir, "Masters_AND_INFO.zip")
         with zipfile.ZipFile(zip_path, "w") as zf:
-            for name in ("club", "streaming", "premaster"):
-                if d["downloads"][name]:
-                    zf.write(os.path.join(sess_dir, d["downloads"][name]), d["downloads"][name])
-            zf.write(session_json_path, "session.json")
+            for name in [
+                "club_master.wav",
+                "stream_master.wav",
+                "premaster_unlimited.wav",
+                "ClubMaster_24b_48k_INFO.txt",
+                "StreamingMaster_24b_44k1_INFO.txt",
+                "UnlimitedPremaster_24b_48k_INFO.txt",
+            ]:
+                zf.write(os.path.join(sess_dir, name), name)
         d = read_json(progress_path(sess_dir))
         d["downloads"]["zip"] = os.path.basename(zip_path)
         write_json_atomic(progress_path(sess_dir), d)
+        add_manifest("Masters_AND_INFO.zip", "application/zip")
+
+        write_manifest(root, manifest)
 
         # --- done -----------------------------------------------------------
         update_progress(sess_dir, percent=100, phase="done", message="Ready", done=True, error=None)
