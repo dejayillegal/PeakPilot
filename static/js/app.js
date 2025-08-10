@@ -171,6 +171,9 @@ async function startJob(file, blobUrl){
   const { session, progress_url } = await r.json();
   window.PeakPilot = window.PeakPilot || {};
   window.PeakPilot.session = session;
+  if (typeof attachOriginalPlayer === 'function') {
+    attachOriginalPlayer();
+  }
   poll(progress_url, blobUrl, session);
 }
 
@@ -202,6 +205,9 @@ async function poll(url, originalBlobUrl, session){
       setAnalyzeProgress(j.percent);
       if (j.phase || j.message) setAnalyzeState(j.phase || j.message);
       updateMetrics(j);
+      if (typeof updateMasterCardsProgress === 'function') {
+        updateMasterCardsProgress(j);
+      }
 
       if (j.done) {
         clearInterval(polling);
@@ -209,41 +215,13 @@ async function poll(url, originalBlobUrl, session){
         if (window.renderUploadedAudioCanvas) {
           window.renderUploadedAudioCanvas(session);
         }
-        if (window.renderMasteringResults) {
-          window.renderMasteringResults(session, [
+        const s = window.PeakPilot.session;
+        const base = `/download/${s}/`;
+        if (typeof renderMasteringResultsInHero === 'function') {
+          renderMasteringResultsInHero(s, [
             {
               id: "club",
               title: "Club (48k/24, target −7.2 LUFS, −0.8 dBTP)",
-              processedUrl: `/download/${session}/${encodeURIComponent("club_master.wav")}`,
-              wavKey: "club_master.wav",
-              infoKey: "club_info.json",
-              metrics: { labelRow:["LUFS-I","TP","LRA","Thresh"], input:["-17.19","-5.60","27.24","-60.00"], output:["-7.40","0.00","27.24","—"] }
-            },
-            {
-              id: "stream",
-              title: "Streaming (44.1k/24, target −9.5 LUFS, −1.0 dBTP)",
-              processedUrl: `/download/${session}/${encodeURIComponent("stream_master.wav")}`,
-              wavKey: "stream_master.wav",
-              infoKey: "stream_info.json",
-              metrics: { labelRow:["LUFS-I","TP","LRA","Thresh"], input:["-17.19","-5.60","27.24","-60.00"], output:["-9.52","0.00","27.24","—"] }
-            },
-            {
-              id: "unlimited",
-              title: "Unlimited Premaster (48k/24, peak −6 dBFS)",
-              processedUrl: `/download/${session}/${encodeURIComponent("premaster_unlimited.wav")}`,
-              wavKey: "premaster_unlimited.wav",
-              infoKey: "premaster_unlimited_info.json",
-              metrics: { labelRow:["Peak dBFS"], input:["-5.60"], output:["-6.00"] }
-            }
-          ], { showCustom: false });
-        }
-        const base = `/download/${session}/`;
-        if (window.renderMasteringResultsInHero) {
-          window.renderMasteringResultsInHero(session, [
-            {
-              id: "club",
-              title: "Club (48k/24, target −7.2 LUFS, −0.8 dBTP)",
-              processedUrl: base + encodeURIComponent("club_master.wav"),
               wavKey: "club_master.wav",
               infoKey: "ClubMaster_24b_48k_INFO.txt",
               metrics: { labelRow:["LUFS-I","TP","LRA","Thresh"], input:["-17.19","-5.60","27.24","-60.00"], output:["-7.40","0.00","27.24","—"] }
@@ -251,7 +229,6 @@ async function poll(url, originalBlobUrl, session){
             {
               id: "stream",
               title: "Streaming (44.1k/24, target −9.5 LUFS, −1.0 dBTP)",
-              processedUrl: base + encodeURIComponent("stream_master.wav"),
               wavKey: "stream_master.wav",
               infoKey: "StreamingMaster_24b_44k1_INFO.txt",
               metrics: { labelRow:["LUFS-I","TP","LRA","Thresh"], input:["-17.19","-5.60","27.24","-60.00"], output:["-9.52","0.00","27.24","—"] }
@@ -259,12 +236,12 @@ async function poll(url, originalBlobUrl, session){
             {
               id: "unlimited",
               title: "Unlimited Premaster (48k/24, peak −6 dBFS)",
-              processedUrl: base + encodeURIComponent("premaster_unlimited.wav"),
               wavKey: "premaster_unlimited.wav",
               infoKey: "UnlimitedPremaster_24b_48k_INFO.txt",
               metrics: { labelRow:["Peak dBFS"], input:["-5.60"], output:["-6.00"] }
             }
           ], { showCustom: false });
+          updateMasterCardsProgress(j);
         }
         if (window.drawPeakHighlightsOnOriginal){
           fetch(base + encodeURIComponent("input_preview.wav")).then(r=>r.arrayBuffer()).then(ab=> window.PeakPilot.getAC().decodeAudioData(ab)).then(buf=> window.drawPeakHighlightsOnOriginal(loudCanvas, buf, -1.0)).catch(()=>{});
