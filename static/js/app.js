@@ -12,68 +12,14 @@ const smartChk = document.getElementById('smart_limiter');
 
 const analyzeBtn = document.getElementById('analyze');
 const modal = document.getElementById('modal');
-const progressWrap = document.getElementById('progressWrap');
-const bar = document.getElementById('bar');
-const phase = document.getElementById('phase');
-const percent = document.getElementById('percent');
-const messages = document.getElementById('messages');
-
-(function breatheOrb(){
-  const c = document.getElementById('orb');
-  if (!c || !c.getContext) return; // CSS fallback will show
-  const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
-  const cssW = c.width, cssH = c.height;
-  c.width = cssW * dpr; c.height = cssH * dpr; c.style.width = cssW + 'px'; c.style.height = cssH + 'px';
-  const ctx = c.getContext('2d');
-  ctx.scale(dpr, dpr);
-
-  const W = cssW, H = cssH, CX = W/2, CY = H/2;
-  const BASE_R = 56, DOTS = 110;
-  const dots = Array.from({length: DOTS}, (_,i)=>({
-    a:(i/DOTS)*Math.PI*2,
-    r: BASE_R + 16*Math.random(),
-    s: 0.7 + Math.random()*0.8,
-    p: Math.random()*Math.PI*2,
-    o: 0.25 + Math.random()*0.45
-  }));
-  let last = performance.now();
-
-  function tick(now){
-    const dt = (now - last)/1000; last = now;
-    const t = now/1000;
-
-    const breath = 1 + 0.05*Math.sin(t*0.9);
-    ctx.clearRect(0,0,W,H);
-
-    const grd = ctx.createRadialGradient(CX, CY, 8, CX, CY, 120);
-    grd.addColorStop(0, 'rgba(31,241,233,.26)');
-    grd.addColorStop(1, 'rgba(31,241,233,0)');
-    ctx.fillStyle = grd; ctx.beginPath(); ctx.arc(CX,CY,110,0,Math.PI*2); ctx.fill();
-
-    ctx.beginPath();
-    ctx.fillStyle = 'rgba(31,241,233,.78)';
-    ctx.arc(CX, CY, 32*breath, 0, Math.PI*2); ctx.fill();
-
-    ctx.beginPath();
-    ctx.strokeStyle = 'rgba(31,241,233,.25)';
-    ctx.lineWidth = 2;
-    ctx.arc(CX, CY, 64*breath, 0, Math.PI*2); ctx.stroke();
-
-    dots.forEach(d=>{
-      d.p += dt * d.s;
-      const R = (d.r + 8*Math.sin(d.p*1.1)) * breath;
-      const x = CX + Math.cos(d.a + d.p*0.09) * R;
-      const y = CY + Math.sin(d.a + d.p*0.09) * R;
-      ctx.beginPath();
-      ctx.fillStyle = `rgba(31,241,233,${d.o + 0.25*Math.sin(d.p*1.7)})`;
-      ctx.arc(x, y, 1.4 + 0.9*Math.sin(d.p*1.3), 0, Math.PI*2);
-      ctx.fill();
-    });
-
-    requestAnimationFrame(tick);
+function showAnalyzingModal(isOpen){
+  if (!modal) return;
+  if (isOpen) {
+    modal.classList.remove('hidden');
+  } else {
+    modal.classList.add('hidden');
   }
-  requestAnimationFrame(tick);
-})();
+}
 
 const preview = document.getElementById('preview');
 const playBtn = document.getElementById('play');
@@ -103,7 +49,6 @@ const loudCtx = loudCanvas.getContext('2d');
 
 let polling = null;
 let wave = null;
-let lastMessage = "";
 let lastMetrics = null;
 
 let currentLabel = 'Original';
@@ -117,19 +62,7 @@ function t(sec){
   const m = Math.floor(sec/60), s = Math.floor(sec%60);
   return `${m}:${s.toString().padStart(2,'0')}`;
 }
-function appendMessage(msg){ if(!msg || msg === lastMessage) return; lastMessage = msg; const li = document.createElement('li'); li.textContent = msg; messages.appendChild(li); }
-function setProgress(p, ph, msg){
-  if (typeof p === 'number' && p >= 0){
-    bar.classList.remove('indeterminate');
-    bar.style.width = p + '%';
-    percent.textContent = p + '%';
-  }else{
-    bar.classList.add('indeterminate');
-    percent.textContent = '';
-  }
-  phase.textContent = ph || '';
-  if (msg) appendMessage(msg);
-}
+// progress display handled by setAnalyzeState / setAnalyzeProgress
 function setIf(id, v){ const el = document.getElementById(id); if(!el) return; el.textContent = (v==null? '—' : (typeof v === 'number' ? v.toFixed(2) : v)); }
 
 function makeWaveform(){
@@ -263,13 +196,14 @@ async function poll(url, originalBlobUrl){
       const r = await fetch(url, { cache: 'no-store' });
       const j = await r.json();
 
-      setProgress(j.percent, j.phase, j.message);
-      updateMetrics(j);
+        setAnalyzeProgress(j.percent);
+        if (j.phase || j.message) setAnalyzeState(j.phase || j.message);
+        updateMetrics(j);
 
-      if (j.done) {
-        clearInterval(polling);
-        modal.classList.add('hidden');
-        result.classList.remove('hidden');
+        if (j.done) {
+          clearInterval(polling);
+          showAnalyzingModal(false);
+          result.classList.remove('hidden');
         dlClub.href = j.downloads.club;
         dlStreaming.href = j.downloads.streaming;
         dlPremaster.href = j.downloads.premaster;
@@ -299,12 +233,173 @@ async function poll(url, originalBlobUrl){
 // UI wiring
 pick?.addEventListener('click', ()=> fileInput.click());
 drop?.addEventListener('click', ()=> fileInput.click());
-fileInput?.addEventListener('change', ()=>{ const f=fileInput.files[0]; if(f){ selectedFile=f; selectedBlobUrl=URL.createObjectURL(f); messages.innerHTML=''; loadIntoWave(selectedBlobUrl,'Original',1.0); analyzeBtn.disabled=false; }});
+  fileInput?.addEventListener('change', ()=>{ const f=fileInput.files[0]; if(f){ selectedFile=f; selectedBlobUrl=URL.createObjectURL(f); loadIntoWave(selectedBlobUrl,'Original',1.0); analyzeBtn.disabled=false; }});
 ['dragenter','dragover'].forEach(ev => drop.addEventListener(ev, e=>{ e.preventDefault(); drop.classList.add('drag'); }));
 ['dragleave','drop'].forEach(ev => drop.addEventListener(ev, e=>{ e.preventDefault(); drop.classList.remove('drag'); }));
-drop.addEventListener('drop', e=>{ e.preventDefault(); const f=e.dataTransfer.files[0]; if(f){ selectedFile=f; selectedBlobUrl=URL.createObjectURL(f); messages.innerHTML=''; loadIntoWave(selectedBlobUrl,'Original',1.0); analyzeBtn.disabled=false; }});
-analyzeBtn?.addEventListener('click', ()=>{ if(!selectedFile) return; messages.innerHTML=''; modal.classList.remove('hidden'); setProgress(0,'Starting…'); startJob(selectedFile, selectedBlobUrl); });
+  drop.addEventListener('drop', e=>{ e.preventDefault(); const f=e.dataTransfer.files[0]; if(f){ selectedFile=f; selectedBlobUrl=URL.createObjectURL(f); loadIntoWave(selectedBlobUrl,'Original',1.0); analyzeBtn.disabled=false; }});
+  analyzeBtn?.addEventListener('click', ()=>{ if(!selectedFile) return; showAnalyzingModal(true); setAnalyzeProgress(0); setAnalyzeState('Starting…'); startJob(selectedFile, selectedBlobUrl); });
 
 // Player
 playBtn?.addEventListener('click', ()=>{ if(!wave) return; if (wave.isPlaying()){ wave.pause(); playBtn.textContent='Play'; } else { wave.play(); playBtn.textContent='Pause'; }});
 window.addEventListener('resize', ()=> drawTimelineOverlay(lastMetrics?.timeline || null));
+
+// Orb animator singleton and modal helpers
+(() => {
+  window.PeakPilot = window.PeakPilot || {};
+
+  function attachOrb() {
+    const canvas = document.getElementById('orb');
+    if (!canvas) return;
+    if (window.PeakPilot.orbAnimator) {
+      window.PeakPilot.orbAnimator.destroy();
+      window.PeakPilot.orbAnimator = null;
+    }
+    const animator = new OrbAnimator(canvas);
+    animator.start();
+    window.PeakPilot.orbAnimator = animator;
+  }
+
+  function detachOrb() {
+    if (window.PeakPilot.orbAnimator) {
+      window.PeakPilot.orbAnimator.destroy();
+      window.PeakPilot.orbAnimator = null;
+    }
+  }
+
+  class OrbAnimator {
+    constructor(canvas) {
+      this.c = canvas;
+      this.ctx = canvas.getContext('2d', { alpha: true });
+      this.handleResize = this.resize.bind(this);
+      this.running = false;
+      this.raf = 0;
+      this.t0 = performance.now();
+      this.particles = [];
+      this.baseR = 58;
+      this.waveAmp = 14;
+      this.count = 200;
+      this.noiseSeed = Math.random() * 1000;
+
+      this.resize();
+      this.buildParticles();
+
+      this.ro = new ResizeObserver(() => this.resize());
+      this.ro.observe(this.c);
+    }
+
+    resize() {
+      const dpr = Math.max(1, window.devicePixelRatio || 1);
+      const cssW = parseFloat(getComputedStyle(this.c).width);
+      const cssH = parseFloat(getComputedStyle(this.c).height);
+      this.c.width = Math.round(cssW * dpr);
+      this.c.height = Math.round(cssH * dpr);
+      this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    buildParticles() {
+      this.particles.length = 0;
+      for (let i = 0; i < this.count; i++) {
+        const a = (i / this.count) * Math.PI * 2;
+        this.particles.push({ a, w: 0 });
+      }
+    }
+
+    n1(x) { return Math.sin(x) * 0.5 + Math.sin(2.7 * x + 1.3) * 0.3 + Math.sin(5.1 * x + 2.2) * 0.2; }
+
+    drawOrbGlow(cx, cy, r, t) {
+      const g = this.ctx.createRadialGradient(cx, cy, r * 0.2, cx, cy, r * 1.2);
+      const p = (Math.sin(t * 0.0015) + 1) * 0.5;
+      const c1 = `rgba(${Math.round(90 + 30*p)}, ${Math.round(220)}, ${Math.round(255 - 20*p)}, 0.65)`;
+      const c2 = `rgba(${Math.round(120)}, ${Math.round(255)}, ${Math.round(220)}, 0.08)`;
+      g.addColorStop(0, c1);
+      g.addColorStop(1, c2);
+
+      this.ctx.beginPath();
+      this.ctx.fillStyle = g;
+      this.ctx.arc(cx, cy, r * 1.15, 0, Math.PI * 2);
+      this.ctx.fill();
+    }
+
+    drawWaveRing(cx, cy, baseR, t) {
+      const ctx = this.ctx;
+      ctx.beginPath();
+      for (let i = 0; i < this.particles.length; i++) {
+        const p = this.particles[i];
+        const wobble = this.waveAmp * this.n1(p.a * 1.5 + t * 0.002 + this.noiseSeed);
+        const r = baseR + wobble;
+        const x = cx + Math.cos(p.a) * r;
+        const y = cy + Math.sin(p.a) * r;
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+      ctx.strokeStyle = 'rgba(160, 245, 255, 0.7)';
+      ctx.lineWidth = 1.25;
+      ctx.stroke();
+
+      for (let i = 0; i < this.particles.length; i += 12) {
+        const p = this.particles[i];
+        const wobble = this.waveAmp * this.n1(p.a * 1.5 + t * 0.002 + this.noiseSeed);
+        const r = baseR + wobble;
+        const x = cx + Math.cos(p.a) * r;
+        const y = cy + Math.sin(p.a) * r;
+        ctx.beginPath();
+        ctx.arc(x, y, 1.2, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(200, 255, 240, 0.9)';
+        ctx.fill();
+      }
+    }
+
+    frame = (tm) => {
+      if (!this.running) return;
+      const t = tm - this.t0;
+      const w = this.c.clientWidth;
+      const h = this.c.clientHeight;
+      const cx = w / 2;
+      const cy = h / 2;
+
+      this.ctx.clearRect(0, 0, w, h);
+
+      const liveR = this.baseR + Math.sin(t * 0.0023) * 4;
+      this.drawOrbGlow(cx, cy, liveR, t);
+      this.drawWaveRing(cx, cy, liveR, t);
+
+      this.raf = requestAnimationFrame(this.frame);
+    }
+
+    start() {
+      if (this.running) return;
+      this.running = true;
+      this.raf = requestAnimationFrame(this.frame);
+    }
+
+    destroy() {
+      this.running = false;
+      if (this.raf) cancelAnimationFrame(this.raf);
+      if (this.ro) this.ro.disconnect();
+      this.ctx.clearRect(0, 0, this.c.clientWidth, this.c.clientHeight);
+    }
+  }
+
+  window.PeakPilot.attachOrb = attachOrb;
+  window.PeakPilot.detachOrb = detachOrb;
+
+  const _origShow = window.showAnalyzingModal;
+  window.showAnalyzingModal = function(isOpen) {
+    if (typeof _origShow === 'function') _origShow(isOpen);
+    if (isOpen) {
+      setTimeout(() => window.PeakPilot.attachOrb(), 0);
+    } else {
+      window.PeakPilot.detachOrb();
+    }
+  };
+
+  window.setAnalyzeState = function(text) {
+    const el = document.getElementById('pp-state');
+    if (el) el.textContent = text;
+  };
+
+  window.setAnalyzeProgress = function(pct) {
+    const bar = document.querySelector('.pp-progress .bar');
+    if (bar) bar.style.width = `${Math.max(0, Math.min(100, pct))}%`;
+  };
+})();

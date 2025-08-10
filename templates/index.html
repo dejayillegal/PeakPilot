@@ -118,20 +118,16 @@
       </div>
 
     <div id="modal" class="modal hidden">
-      <div class="modal-inner card subtle">
+      <div class="pp-modal analyzing" role="dialog" aria-modal="true" aria-labelledby="pp-analyze-title">
+        <h2 id="pp-analyze-title">Analyzing...</h2>
         <div class="orb-hero">
-          <canvas id="orb" width="160" height="160"></canvas>
+          <canvas id="orb" width="320" height="320" style="width:160px;height:160px"></canvas>
           <div class="orb-fallback" aria-hidden="true"></div>
         </div>
-        <p class="tiny muted">Your master preview will be ready shortly and adjustments can be made to taste afterwards.</p>
-        <div id="progressWrap" class="progress-wrap">
-          <div class="progress-label">
-            <span id="phase">Starting…</span>
-            <span id="percent"></span>
-          </div>
-          <div class="progressbar"><div id="bar" class="indeterminate"></div></div>
-          <ul id="messages" class="messages"></ul>
+        <div class="pp-progress">
+          <div class="bar" style="width:0%"></div>
         </div>
+        <p id="pp-state" class="pp-state" aria-live="polite">Starting…</p>
       </div>
     </div>
 
