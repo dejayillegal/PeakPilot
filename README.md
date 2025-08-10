@@ -9,7 +9,7 @@ pinned: false
 ---
 
 Notes
-The server writes incremental progress and metrics to /tmp/peakpilot/<session>/progress.json. The UI polls /progress/<session> every second.
+The server writes session data under a configurable work directory (env `WORK_DIR`, default `/tmp/peakpilot`). Progress and metrics are stored in `<work>/<session>/progress.json` and the UI polls `/progress/<session>` every second.
 
 session.json includes version, selected preset, metrics, timeline arrays, AI adjustment info, and output checksums. It’s included in the ZIP and also separately downloadable.
 
