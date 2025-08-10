@@ -24,7 +24,7 @@
     const f = fileQueue[0];
     const el = document.createElement('div');
     el.className = 'pp-filechip';
-    el.innerHTML = `\n      <div class="pp-filemeta">${f.name} <span aria-hidden="true">•</span> ${(f.size/1024/1024).toFixed(2)} MB</div>\n      <button class="pp-remove" aria-label="Remove file">✕</button>`;
+    el.innerHTML = `\n      <div class="pp-fileinfo">\n        <div class="pp-filemeta">${f.name} <span aria-hidden="true">•</span> ${(f.size/1024/1024).toFixed(2)} MB</div>\n        <div class="pp-fileprog" hidden><div class="bar"></div></div>\n      </div>\n      <button class="pp-remove" aria-label="Remove file">✕</button>`;
     el.querySelector('.pp-remove').addEventListener('click', () => { fileQueue = []; syncState(); });
     fileList.appendChild(el);
   }
@@ -64,12 +64,16 @@
 
   clearBtn.addEventListener('click', () => { fileQueue = []; fileInput.value=''; syncState(); });
 
-  function openAnalyzingModal() {
+  function openAnalyzingModal(stage='Starting…') {
     modal.hidden = false;
     bar.classList.add('indeterminate');
     bar.style.width = '0%';
-    stageEl.textContent = 'Starting…';
+    stageEl.textContent = stage;
     flavorEl.textContent = '';
+  }
+
+  function closeAnalyzingModal() {
+    modal.hidden = true;
   }
 
   async function pollProgress() {
@@ -108,15 +112,36 @@
     try {
       const data = new FormData();
       data.append('file', fileQueue[0], fileQueue[0].name);
-      const up = await fetch('/upload', { method: 'POST', body: data });
-      if (!up.ok) {
-        const j = await up.json().catch(()=>({}));
-        errorBox.textContent = j.error || 'Upload failed.';
-        return;
-      }
+
+      const chipProg = fileList.querySelector('.pp-fileprog');
+      const chipBar = chipProg?.querySelector('.bar');
+      if (chipProg) { chipProg.hidden = false; chipBar.style.width = '0%'; }
+
+      openAnalyzingModal('Uploading…');
+
+      await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', '/upload');
+        xhr.upload.onprogress = e => {
+          if (e.lengthComputable) {
+            const pct = (e.loaded / e.total) * 100;
+            bar.classList.remove('indeterminate');
+            bar.style.width = `${pct}%`;
+            stageEl.textContent = `Uploading… ${pct.toFixed(0)}%`;
+            if (chipBar) chipBar.style.width = `${pct}%`;
+          }
+        };
+        xhr.onerror = () => reject(new Error('Upload failed'));
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) resolve();
+          else reject(new Error('Upload failed'));
+        };
+        xhr.send(data);
+      });
 
       const res = await fetch('/start', { method: 'POST' });
       if (!res.ok) {
+        closeAnalyzingModal();
         const j = await res.json().catch(()=>({}));
         errorBox.textContent = j.error || 'Server refused to start analysis.';
         return;
@@ -124,10 +149,13 @@
       const js = await res.json();
       session = js.session;
 
-      openAnalyzingModal();
+      bar.classList.add('indeterminate');
+      bar.style.width = '0%';
+      stageEl.textContent = 'Starting…';
       beginPollingProgress();
     } catch (e) {
-      errorBox.textContent = 'Network error. Try again.';
+      closeAnalyzingModal();
+      errorBox.textContent = e.message || 'Network error. Try again.';
     }
   });
 })();
