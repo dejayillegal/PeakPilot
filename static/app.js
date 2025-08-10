@@ -31,7 +31,6 @@
 
   function syncState() {
     const ok = fileQueue.length === 1 && isAllowed(fileQueue[0].name);
-    analyzeBtn.disabled = !ok;
     analyzeBtn.setAttribute('aria-disabled', String(!ok));
     if (ok) errorBox.textContent = '';
     renderList();
@@ -99,8 +98,8 @@
   }
 
   analyzeBtn.addEventListener('click', async () => {
-    if (analyzeBtn.disabled) {
-      errorBox.textContent = 'Add an audio file to analyze.';
+    if (analyzeBtn.getAttribute('aria-disabled') === 'true') {
+      errorBox.textContent = 'NO_AUDIO: Upload an audio file before analyzing.';
       dropZone.classList.add('pp-dragover');
       setTimeout(() => dropZone.classList.remove('pp-dragover'), 350);
       return;

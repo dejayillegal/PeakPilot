@@ -22,4 +22,25 @@
 .pp-remove { border:none; background:transparent; cursor:pointer; }
 .pp-error { color: #f66; min-height:1.2em; }
 .pp-actions { display:flex; gap:10px; justify-content:flex-start; align-items:center; }
-.pp-primary[disabled] { opacity:.5; cursor:not-allowed; }
+.pp-primary {
+  padding:.6rem 1.2rem;
+  border-radius:12px;
+  border:none;
+  background:var(--pp-accent, #7ef);
+  color:#001018;
+  font-weight:600;
+  cursor:pointer;
+}
+.pp-primary[aria-disabled="true"] {
+  opacity:.5;
+  cursor:not-allowed;
+}
+
+.pp-ghost {
+  padding:.6rem 1.2rem;
+  border-radius:12px;
+  border:1px solid var(--pp-border,#444);
+  background:transparent;
+  color:var(--fg,#fff);
+  cursor:pointer;
+}
