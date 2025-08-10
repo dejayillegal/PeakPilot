@@ -63,7 +63,7 @@
       <div class="player">
         <button id="play" class="btn play">Play</button>
         <div class="time"><span id="cur">0:00</span> / <span id="dur">0:00</span></div>
-        <div class="ab"><button id="abOriginal" class="btn ghost">Original</button><button id="abProcessed" class="btn ghost">Processed</button></div>
+        <div class="ab"><button id="abOriginal" class="btn ghost">Original</button></div>
       </div>
       <div id="waveWrap">
         <div id="waveform"></div>
@@ -71,52 +71,6 @@
       </div>
       <div class="preview-source muted tiny" id="previewSource">Preview: Original upload</div>
     </div>
-
-    <div id="metrics" class="metrics card subtle hidden">
-        <h4>Measured metrics</h4>
-        <div class="grid">
-          <div>
-            <h5>Club (48k/24, target −7.2 LUFS, −0.8 dBTP)</h5>
-            <table class="tbl">
-              <thead><tr><th></th><th>LUFS-I</th><th>TP</th><th>LRA</th><th>Thresh</th></tr></thead>
-              <tbody>
-                <tr><td>Input</td><td id="club_in_I">—</td><td id="club_in_TP">—</td><td id="club_in_LRA">—</td><td id="club_in_TH">—</td></tr>
-                <tr><td>Output</td><td id="club_out_I">—</td><td id="club_out_TP">—</td><td id="club_out_LRA">—</td><td id="club_out_TH">—</td></tr>
-              </tbody>
-            </table>
-          </div>
-          <div>
-            <h5>Streaming (44.1k/24, target −9.5 LUFS, −1.0 dBTP)</h5>
-            <table class="tbl">
-              <thead><tr><th></th><th>LUFS-I</th><th>TP</th><th>LRA</th><th>Thresh</th></tr></thead>
-              <tbody>
-                <tr><td>Input</td><td id="str_in_I">—</td><td id="str_in_TP">—</td><td id="str_in_LRA">—</td><td id="str_in_TH">—</td></tr>
-                <tr><td>Output</td><td id="str_out_I">—</td><td id="str_out_TP">—</td><td id="str_out_LRA">—</td><td id="str_out_TH">—</td></tr>
-              </tbody>
-            </table>
-          </div>
-          <div>
-            <h5>Unlimited Premaster (48k/24, peak −6 dBFS)</h5>
-            <table class="tbl">
-              <thead><tr><th></th><th>Peak dBFS</th></tr></thead>
-              <tbody>
-                <tr><td>Input</td><td id="pre_in_P">—</td></tr>
-                <tr><td>Output</td><td id="pre_out_P">—</td></tr>
-              </tbody>
-            </table>
-          </div>
-          <div id="customMetrics" class="hidden">
-            <h5>Custom (service preset)</h5>
-            <table class="tbl">
-              <thead><tr><th></th><th>LUFS-I</th><th>TP</th><th>LRA</th><th>Thresh</th></tr></thead>
-              <tbody>
-                <tr><td>Input</td><td id="cus_in_I">—</td><td id="cus_in_TP">—</td><td id="cus_in_LRA">—</td><td id="cus_in_TH">—</td></tr>
-                <tr><td>Output</td><td id="cus_out_I">—</td><td id="cus_out_TP">—</td><td id="cus_out_LRA">—</td><td id="cus_out_TH">—</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
 
     <div id="modal" class="modal hidden">
       <div class="pp-modal analyzing" role="dialog" aria-modal="true" aria-labelledby="pp-analyze-title">
@@ -152,9 +106,11 @@
     </div>
   </section>
 
+  <div class="canvases" part="canvases"></div>
   <section id="pp-results" class="pp-results" aria-live="polite"></section>
 </main>
 
+<script src="{{ url_for('static', filename='js/uploaded-canvas.js') }}" defer></script>
 <script src="{{ url_for('static', filename='js/results.js') }}" defer></script>
 <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>

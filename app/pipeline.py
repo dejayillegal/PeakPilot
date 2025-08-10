@@ -8,7 +8,9 @@ from typing import Dict, Any
 from pathlib import Path
 from datetime import datetime
 import zipfile
+import shutil
 from .ai_module import analyze_track
+from .util_fs import write_manifest
 
 import numpy as np
 import soundfile as sf
@@ -191,6 +193,16 @@ def run_pipeline(session: str, sess_dir: str, src_path: str, params: Dict[str, A
         update_progress(sess_dir, percent=5, phase="analyze", message="Analyzing input…")
         info = ffprobe_info(src_path)
         validate_upload(info)
+        # create lightweight preview for client-side waveform
+        try:
+            run([
+                "ffmpeg", "-nostdin", "-hide_banner", "-y",
+                "-i", src_path,
+                "-ar", "48000", "-c:a", "pcm_s24le",
+                str(Path(sess_dir) / "input_preview.wav"),
+            ])
+        except Exception:
+            shutil.copyfile(src_path, Path(sess_dir) / "input_preview.wav")
         ln_in = measure_loudnorm_json(src_path)
         tl = ebur128_timeline(src_path)
         peak_in = measure_peak_dbfs(src_path)
@@ -227,11 +239,12 @@ def run_pipeline(session: str, sess_dir: str, src_path: str, params: Dict[str, A
 
         # --- club master ----------------------------------------------------
         update_progress(sess_dir, percent=45, phase="club", message="Rendering Club…")
-        club_wav = os.path.join(sess_dir, "club.wav")
+        club_wav = os.path.join(sess_dir, "club_master.wav")
         loudnorm_two_pass(src_path, club_wav, I=-7.2 + ai_adj["club"]["dI"], TP=-0.8 + ai_adj["club"]["dTP"], LRA=11, sr=48000, bits=24)
         club_metrics = measure_loudnorm_json(club_wav)
         info_out = ffprobe_info(club_wav)
         sha = checksum_sha256(club_wav)
+        write_json_atomic(os.path.join(sess_dir, "club_info.json"), info_out)
         d = read_json(progress_path(sess_dir))
         d["downloads"]["club"] = os.path.basename(club_wav)
         d["metrics"]["club"]["output"] = {
@@ -246,11 +259,12 @@ def run_pipeline(session: str, sess_dir: str, src_path: str, params: Dict[str, A
 
         # --- streaming master ----------------------------------------------
         update_progress(sess_dir, percent=70, phase="streaming", message="Rendering Streaming…")
-        streaming_wav = os.path.join(sess_dir, "streaming.wav")
+        streaming_wav = os.path.join(sess_dir, "stream_master.wav")
         loudnorm_two_pass(src_path, streaming_wav, I=-9.5 + ai_adj["streaming"]["dI"], TP=-1.0 + ai_adj["streaming"]["dTP"], LRA=11, sr=44100, bits=24)
         str_metrics = measure_loudnorm_json(streaming_wav)
         info_out = ffprobe_info(streaming_wav)
         sha = checksum_sha256(streaming_wav)
+        write_json_atomic(os.path.join(sess_dir, "stream_info.json"), info_out)
         d = read_json(progress_path(sess_dir))
         d["downloads"]["streaming"] = os.path.basename(streaming_wav)
         d["metrics"]["streaming"]["output"] = {
@@ -265,15 +279,32 @@ def run_pipeline(session: str, sess_dir: str, src_path: str, params: Dict[str, A
 
         # --- premaster ------------------------------------------------------
         update_progress(sess_dir, percent=85, phase="premaster", message="Preparing Unlimited Premaster…")
-        premaster_wav = os.path.join(sess_dir, "premaster.wav")
+        premaster_wav = os.path.join(sess_dir, "premaster_unlimited.wav")
         normalize_peak_to(src_path, premaster_wav, peak_dbfs=-6.0, sr=48000, bits=24)
         peak_out = measure_peak_dbfs(premaster_wav)
         info_out = ffprobe_info(premaster_wav)
         sha = checksum_sha256(premaster_wav)
+        write_json_atomic(os.path.join(sess_dir, "premaster_unlimited_info.json"), info_out)
         d = read_json(progress_path(sess_dir))
         d["downloads"]["premaster"] = os.path.basename(premaster_wav)
         d["metrics"]["premaster"]["output"] = {"peak_dbfs": peak_out, "sr": info_out["sr"], "bits": 24, "sha256": sha}
         write_json_atomic(progress_path(sess_dir), d)
+
+        # manifest of outputs
+        root = Path(sess_dir)
+        manifest = {}
+        def add(key, mime):
+            f = root / key
+            assert f.exists() and f.stat().st_size > 0, f"Missing output: {key}"
+            manifest[key] = {"filename": key, "type": mime}
+
+        add("input_preview.wav", "audio/wav")
+        add("club_master.wav", "audio/wav"); add("club_info.json", "application/json")
+        add("stream_master.wav", "audio/wav"); add("stream_info.json", "application/json")
+        add("premaster_unlimited.wav", "audio/wav"); add("premaster_unlimited_info.json", "application/json")
+        if (root / "custom_master.wav").exists():
+            add("custom_master.wav", "audio/wav"); add("custom_info.json", "application/json")
+        write_manifest(root, manifest)
 
         # --- package --------------------------------------------------------
         update_progress(sess_dir, percent=95, phase="package", message="Packaging downloads…")
