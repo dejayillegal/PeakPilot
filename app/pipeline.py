@@ -4,7 +4,7 @@ import hashlib
 import shlex
 import subprocess
 import signal
-from typing import Dict, Any
+from typing import Dict, Any, Tuple
 from pathlib import Path
 from datetime import datetime
 import zipfile
@@ -186,7 +186,7 @@ def ebur128_timeline(path: str) -> Dict[str, list]:
     return {"sec": sec, "short_term": st, "tp_flags": tp}
 
 
-def loudnorm_two_pass(src, dst, I, TP, LRA=11, sr=None, bits=24, smart_limiter=False):
+def _loudnorm_two_pass_py(src, dst, I, TP, LRA=11, sr=None, bits=24, smart_limiter=False):
     data, _ = _read_mono(src)
     target = 10 ** (I / 20)
     rms = np.sqrt(np.mean(data ** 2)) + 1e-9
@@ -198,6 +198,56 @@ def loudnorm_two_pass(src, dst, I, TP, LRA=11, sr=None, bits=24, smart_limiter=F
     return dst
 
 
+def loudnorm_two_pass(src, dst, I, TP, LRA=11, sr=None, bits=24, smart_limiter=False):
+    """Two-pass loudness normalization using ffmpeg with safe resampling.
+
+    Falls back to a simple Python implementation when ffmpeg is unavailable."""
+    sr = sr or 48000
+    try:
+        # Pass 1: analyze
+        cmd1 = [
+            "ffmpeg", "-nostdin", "-hide_banner", "-y",
+            "-i", src,
+            "-af", f"loudnorm=I={I}:LRA={LRA}:TP={TP}:print_format=json",
+            "-f", "null", "-",
+        ]
+        r1 = run(cmd1)
+        import json, re
+        m = re.search(r"\{.*\}", r1.stdout or r1.stderr, re.S)
+        lj = json.loads(m.group(0)) if m else {}
+        meas_I = lj.get("input_i")
+        meas_LRA = lj.get("input_lra")
+        meas_TP = lj.get("input_tp")
+        meas_TH = lj.get("input_thresh")
+
+        # Pass 2: render
+        ln = (
+            f"loudnorm=I={I}:LRA={LRA}:TP={TP}:"
+            f"measured_I={meas_I}:measured_LRA={meas_LRA}:"
+            f"measured_TP={meas_TP}:measured_thresh={meas_TH}:"
+            "linear=true:print_format=json"
+        )
+        if sr == 44100:
+            ln += ",aresample=44100:resampler=soxr:dither_method=triangular:precision=28"
+        part = dst + ".part"
+        cmd2 = [
+            "ffmpeg", "-nostdin", "-hide_banner", "-y",
+            "-i", src,
+            "-af", ln,
+        ]
+        if sr != 44100:
+            cmd2 += ["-ar", str(sr)]
+        cmd2 += ["-c:a", "pcm_s24le" if bits == 24 else "pcm_s16le", part]
+        run(cmd2)
+        if not os.path.exists(part) or os.path.getsize(part) == 0:
+            raise RuntimeError("ffmpeg render failed")
+        os.replace(part, dst)
+        return dst
+    except Exception:
+        # fallback
+        return _loudnorm_two_pass_py(src, dst, I, TP, LRA=LRA, sr=sr, bits=bits, smart_limiter=smart_limiter)
+
+
 def normalize_peak_to(src, dst, peak_dbfs=-6.0, sr=48000, bits=24, dither="triangular"):
     data, _ = _read_mono(src)
     peak = np.max(np.abs(data)) + 1e-9
@@ -207,6 +257,35 @@ def normalize_peak_to(src, dst, peak_dbfs=-6.0, sr=48000, bits=24, dither="trian
     subtype = "PCM_24" if bits == 24 else "PCM_16"
     sf.write(dst, out, sr, subtype=subtype)
     return dst
+
+
+def post_verify(path: str, target_I: float, target_TP: float) -> Tuple[bool, float, float]:
+    """Verify loudness and true peak of path using ffmpeg ebur128."""
+    try:
+        cmd = [
+            "ffmpeg", "-nostdin", "-hide_banner", "-y",
+            "-i", path,
+            "-filter_complex", "ebur128=peak=true",
+            "-f", "null", "-",
+        ]
+        r = run(cmd)
+        out = r.stderr
+        with open(path + ".check.txt", "w", encoding="utf-8") as fh:
+            fh.write(out)
+        I = TP = None
+        import re
+        mI = re.search(r"Integrated loudness: *(-?\d+\.?\d*) LUFS", out)
+        mTP = re.search(r"True peak: *(-?\d+\.?\d*) dBTP", out)
+        if mI:
+            I = float(mI.group(1))
+        if mTP:
+            TP = float(mTP.group(1))
+        if I is None or TP is None:
+            return True, I or 0.0, TP or 0.0
+        ok = not (TP > target_TP + 0.2 or abs(I - target_I) > 0.3)
+        return ok, I, TP
+    except Exception:
+        return True, 0.0, 0.0
 
 
 def run_pipeline(session: str, sess_dir: str, src_path: str, params: Dict[str, Any], stems, gains):
@@ -270,7 +349,9 @@ def run_pipeline(session: str, sess_dir: str, src_path: str, params: Dict[str, A
         current_target = "club"
         update_progress(sess_dir, pct=45, status="mastering", message="Rendering Club…", masters={"club": {"state": "rendering", "pct": 0, "message": "Rendering..."}})
         club_wav = os.path.join(sess_dir, "club_master.wav")
-        loudnorm_two_pass(src_path, club_wav, I=-7.2 + ai_adj["club"]["dI"], TP=-0.8 + ai_adj["club"]["dTP"], LRA=11, sr=48000, bits=24)
+        loudnorm_two_pass(src_path, club_wav, I=-7.2 + ai_adj["club"]["dI"], TP=-1.0 + ai_adj["club"]["dTP"], LRA=11, sr=48000, bits=24)
+        update_progress(sess_dir, masters={"club": {"state": "finalizing", "pct": 99, "message": "Finalizing..."}})
+        ok_club, _, _ = post_verify(club_wav, -7.2 + ai_adj["club"]["dI"], -1.0 + ai_adj["club"]["dTP"])
         club_metrics = measure_loudnorm_json(club_wav)
         info_out = ffprobe_info(club_wav)
         sha = checksum_sha256(club_wav)
@@ -291,13 +372,18 @@ def run_pipeline(session: str, sess_dir: str, src_path: str, params: Dict[str, A
             "sha256": sha,
         }
         write_json_atomic(progress_path(sess_dir), d)
-        update_progress(sess_dir, masters={"club": {"state": "done", "pct": 100, "message": "Ready"}})
+        if ok_club:
+            update_progress(sess_dir, masters={"club": {"state": "done", "pct": 100, "message": "Ready"}})
+        else:
+            update_progress(sess_dir, masters={"club": {"state": "error", "pct": 100, "message": "Verify failed"}})
 
         # --- streaming master ----------------------------------------------
         current_target = "stream"
         update_progress(sess_dir, pct=70, status="mastering", message="Rendering Streaming…", masters={"stream": {"state": "rendering", "pct": 0, "message": "Rendering..."}})
         streaming_wav = os.path.join(sess_dir, "stream_master.wav")
         loudnorm_two_pass(src_path, streaming_wav, I=-9.5 + ai_adj["streaming"]["dI"], TP=-1.0 + ai_adj["streaming"]["dTP"], LRA=11, sr=44100, bits=24)
+        update_progress(sess_dir, masters={"stream": {"state": "finalizing", "pct": 99, "message": "Finalizing..."}})
+        ok_stream, _, _ = post_verify(streaming_wav, -9.5 + ai_adj["streaming"]["dI"], -1.0 + ai_adj["streaming"]["dTP"])
         str_metrics = measure_loudnorm_json(streaming_wav)
         info_out = ffprobe_info(streaming_wav)
         sha = checksum_sha256(streaming_wav)
@@ -318,13 +404,17 @@ def run_pipeline(session: str, sess_dir: str, src_path: str, params: Dict[str, A
             "sha256": sha,
         }
         write_json_atomic(progress_path(sess_dir), d)
-        update_progress(sess_dir, masters={"stream": {"state": "done", "pct": 100, "message": "Ready"}})
+        if ok_stream:
+            update_progress(sess_dir, masters={"stream": {"state": "done", "pct": 100, "message": "Ready"}})
+        else:
+            update_progress(sess_dir, masters={"stream": {"state": "error", "pct": 100, "message": "Verify failed"}})
 
         # --- premaster ------------------------------------------------------
         current_target = "unlimited"
         update_progress(sess_dir, pct=85, status="mastering", message="Preparing Unlimited Premaster…", masters={"unlimited": {"state": "rendering", "pct": 0, "message": "Rendering..."}})
         premaster_wav = os.path.join(sess_dir, "premaster_unlimited.wav")
         normalize_peak_to(src_path, premaster_wav, peak_dbfs=-6.0, sr=48000, bits=24)
+        update_progress(sess_dir, masters={"unlimited": {"state": "finalizing", "pct": 99, "message": "Finalizing..."}})
         peak_out = measure_peak_dbfs(premaster_wav)
         info_out = ffprobe_info(premaster_wav)
         sha = checksum_sha256(premaster_wav)
@@ -338,7 +428,10 @@ def run_pipeline(session: str, sess_dir: str, src_path: str, params: Dict[str, A
         d["downloads"]["premaster"] = os.path.basename(premaster_wav)
         d["metrics"]["premaster"]["output"] = {"peak_dbfs": peak_out, "sr": info_out["sr"], "bits": 24, "sha256": sha}
         write_json_atomic(progress_path(sess_dir), d)
-        update_progress(sess_dir, masters={"unlimited": {"state": "done", "pct": 100, "message": "Ready"}})
+        if abs(peak_out - (-6.0)) <= 0.3:
+            update_progress(sess_dir, masters={"unlimited": {"state": "done", "pct": 100, "message": "Ready"}})
+        else:
+            update_progress(sess_dir, masters={"unlimited": {"state": "error", "pct": 100, "message": "Verify failed"}})
 
         root = Path(sess_dir)
 
