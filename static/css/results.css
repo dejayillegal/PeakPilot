@@ -19,6 +19,10 @@
   margin-top: 14px;
 }
 
+.pp-results.compact {
+  grid-template-columns: 1fr;
+}
+
 @media (min-width: 960px) {
   .pp-results { grid-template-columns: 1fr 1fr; }
 }
@@ -79,6 +83,10 @@
   border: 1px solid var(--pp-border);
 }
 .pp-wave canvas { width: 100%; height: 100%; display: block; }
+
+.wave-neon {
+  box-shadow: 0 0 6px var(--pp-accent-1);
+}
 
 /* Metrics table */
 .pp-metrics {
@@ -142,6 +150,7 @@
   height: 16px;
   fill: var(--pp-accent);
 }
+.pp-dl .emo { margin-right: 4px; }
 .pp-dl:hover {
   text-decoration: underline;
 }

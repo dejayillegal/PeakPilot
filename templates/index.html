@@ -61,7 +61,9 @@
     <!-- Waveform + overlays -->
     <div id="preview" class="preview hidden card subtle">
       <div class="player">
-        <button id="play" class="btn play">Play</button>
+        <button id="play" class="pp-play" type="button" aria-pressed="false" aria-label="Play preview">
+          <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+        </button>
         <div class="time"><span id="cur">0:00</span> / <span id="dur">0:00</span></div>
         <div class="ab"><button id="abOriginal" class="btn ghost">Original</button></div>
       </div>
@@ -69,8 +71,12 @@
         <div id="waveform"></div>
         <canvas id="loudCanvas" height="60"></canvas>
       </div>
+      <pre id="preTech" class="tiny muted" style="white-space:pre-wrap;margin-top:8px;"></pre>
       <div class="preview-source muted tiny" id="previewSource">Preview: Original upload</div>
     </div>
+
+    <!-- Master canvases (inside hero) -->
+    <div id="masterCanvases" class="pp-results compact" aria-live="polite"></div>
 
     <div id="modal" class="modal hidden">
       <div class="pp-modal analyzing" role="dialog" aria-modal="true" aria-labelledby="pp-analyze-title">
@@ -113,5 +119,7 @@
 <script src="{{ url_for('static', filename='js/uploaded-canvas.js') }}" defer></script>
 <script src="{{ url_for('static', filename='js/results.js') }}" defer></script>
 <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+<link rel="stylesheet" href="/static/css/results.css">
+<script src="/static/js/results-hero.js" defer></script>
 </body>
 </html>

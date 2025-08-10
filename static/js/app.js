@@ -21,6 +21,10 @@ function showAnalyzingModal(isOpen){
   }
 }
 
+window.PeakPilot = window.PeakPilot || {};
+window.PeakPilot.PlayerBus = window.PeakPilot.PlayerBus || { cur:null, claim(p){ if(this.cur && this.cur!==p) this.cur.pause?.(); this.cur=p; }, release(p){ if(this.cur===p) this.cur=null; } };
+const PlayerBus = window.PeakPilot.PlayerBus;
+
 const preview = document.getElementById('preview');
 const playBtn = document.getElementById('play');
 const curEl = document.getElementById('cur');
@@ -42,7 +46,10 @@ const pvPremaster = document.getElementById('pvPremaster');
 const pvCustom = document.getElementById('pvCustom');
 
 const metricsPanel = document.getElementById('metrics');
+if(metricsPanel){ metricsPanel.hidden = true; metricsPanel.setAttribute('aria-hidden','true'); }
 const customMetrics = document.getElementById('customMetrics');
+const abProcessed = document.getElementById('abProcessed');
+if(abProcessed){ abProcessed.hidden = true; abProcessed.addEventListener('click', e=>{ e.preventDefault(); return false; }); }
 const loudCanvas = document.getElementById('loudCanvas');
 const loudCtx = loudCanvas.getContext('2d');
 
@@ -80,7 +87,7 @@ function makeWaveform(){
   wave.on('ready', ()=>{ durEl.textContent = t(wave.getDuration()); wave.setVolume(currentGain); drawTimelineOverlay(lastMetrics?.timeline || null); });
   wave.on('audioprocess', ()=>{ curEl.textContent = t(wave.getCurrentTime()); });
   wave.on('seek', ()=>{ curEl.textContent = t(wave.getCurrentTime()); });
-  wave.on('finish', ()=>{ playBtn.textContent = 'Play'; });
+  wave.on('finish', ()=>{ playBtn.setAttribute('aria-pressed','false'); playBtn.setAttribute('aria-label','Play preview'); playBtn.innerHTML='<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>'; PlayerBus.release(previewPlayer); });
 }
 
 function loadIntoWave(srcUrl, label, matchGain=null){
@@ -90,7 +97,7 @@ function loadIntoWave(srcUrl, label, matchGain=null){
   previewSource.textContent = 'Preview: ' + label;
   makeWaveform();
   wave.load(srcUrl);
-  playBtn.textContent = 'Play';
+  playBtn.setAttribute('aria-pressed','false'); playBtn.setAttribute('aria-label','Play preview'); playBtn.innerHTML='<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>';
 }
 
 function gainForI(I, targetRef){
@@ -103,7 +110,7 @@ function gainForI(I, targetRef){
 function updateMetrics(j){
   lastMetrics = j;
   if (j.timeline) drawTimelineOverlay(j.timeline);
-  if (!metricsPanel || !j.metrics) return;
+  if (!metricsPanel || metricsPanel.hasAttribute('aria-hidden') || !j.metrics) return;
 
   metricsPanel.classList.remove('hidden');
   const ci = j.metrics?.club?.input || {}, co = j.metrics?.club?.output || {};
@@ -230,6 +237,47 @@ async function poll(url, originalBlobUrl, session){
             }
           ], { showCustom: false });
         }
+        const base = `/download/${session}/`;
+        if (window.renderMasteringResultsInHero) {
+          window.renderMasteringResultsInHero(session, [
+            {
+              id: "club",
+              title: "Club (48k/24, target −7.2 LUFS, −0.8 dBTP)",
+              processedUrl: base + encodeURIComponent("club_master.wav"),
+              wavKey: "club_master.wav",
+              infoKey: "ClubMaster_24b_48k_INFO.txt",
+              metrics: { labelRow:["LUFS-I","TP","LRA","Thresh"], input:["-17.19","-5.60","27.24","-60.00"], output:["-7.40","0.00","27.24","—"] }
+            },
+            {
+              id: "stream",
+              title: "Streaming (44.1k/24, target −9.5 LUFS, −1.0 dBTP)",
+              processedUrl: base + encodeURIComponent("stream_master.wav"),
+              wavKey: "stream_master.wav",
+              infoKey: "StreamingMaster_24b_44k1_INFO.txt",
+              metrics: { labelRow:["LUFS-I","TP","LRA","Thresh"], input:["-17.19","-5.60","27.24","-60.00"], output:["-9.52","0.00","27.24","—"] }
+            },
+            {
+              id: "unlimited",
+              title: "Unlimited Premaster (48k/24, peak −6 dBFS)",
+              processedUrl: base + encodeURIComponent("premaster_unlimited.wav"),
+              wavKey: "premaster_unlimited.wav",
+              infoKey: "UnlimitedPremaster_24b_48k_INFO.txt",
+              metrics: { labelRow:["Peak dBFS"], input:["-5.60"], output:["-6.00"] }
+            }
+          ], { showCustom: false });
+        }
+        if (window.drawPeakHighlightsOnOriginal){
+          fetch(base + encodeURIComponent("input_preview.wav")).then(r=>r.arrayBuffer()).then(ab=> window.PeakPilot.getAC().decodeAudioData(ab)).then(buf=> window.drawPeakHighlightsOnOriginal(loudCanvas, buf, -1.0)).catch(()=>{});
+        }
+        const preTech = document.getElementById('preTech');
+        if(preTech){
+          const adv = j.metrics?.advisor || {};
+          if(adv.input_I!=null){
+            preTech.textContent = `LUFS-I: ${adv.input_I.toFixed(2)}\nTP: ${(adv.input_TP??0).toFixed(2)}\nLRA: ${(adv.input_LRA??0).toFixed(2)}`;
+          } else {
+            preTech.textContent = 'No technical data';
+          }
+        }
       }
     }catch(e){ /* ignore transient errors */ }
   }, 1000);
@@ -245,7 +293,23 @@ drop?.addEventListener('click', ()=> fileInput.click());
   analyzeBtn?.addEventListener('click', ()=>{ if(!selectedFile) return; showAnalyzingModal(true); setAnalyzeProgress(0); setAnalyzeState('Starting…'); startJob(selectedFile, selectedBlobUrl); });
 
 // Player
-playBtn?.addEventListener('click', ()=>{ if(!wave) return; if (wave.isPlaying()){ wave.pause(); playBtn.textContent='Play'; } else { wave.play(); playBtn.textContent='Pause'; }});
+const previewPlayer = { pause(){ if(wave){ wave.pause(); } } };
+playBtn?.addEventListener('click', ()=>{
+  if(!wave) return;
+  if (wave.isPlaying()){
+    wave.pause();
+    playBtn.setAttribute('aria-pressed','false');
+    playBtn.setAttribute('aria-label','Play preview');
+    playBtn.innerHTML='<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>';
+    PlayerBus.release(previewPlayer);
+  } else {
+    PlayerBus.claim(previewPlayer);
+    wave.play();
+    playBtn.setAttribute('aria-pressed','true');
+    playBtn.setAttribute('aria-label','Pause preview');
+    playBtn.innerHTML='<svg viewBox="0 0 24 24"><path d="M6 5h4v14H6zm8 0h4v14h-4z"/></svg>';
+  }
+});
 window.addEventListener('resize', ()=> drawTimelineOverlay(lastMetrics?.timeline || null));
 
 // Orb animator singleton and modal helpers
