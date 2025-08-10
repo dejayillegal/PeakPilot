@@ -14,59 +14,20 @@
   </header>
 
   <main class="pp-main">
-    <section id="uploader" class="pp-uploader">
-      <div id="dropZone" class="pp-dropzone" tabindex="0" role="button" aria-label="Drop or choose audio file">
-        <div class="pp-dropicon" aria-hidden="true">🎵</div>
-        <div class="pp-droptitle">Drag & drop your mix</div>
-        <div class="pp-dropsub">or</div>
-        <label class="pp-choose">
-          <input id="fileInput" type="file" accept=".wav,.aiff,.aif,.flac,.mp3" hidden />
-          <span class="pp-choosebtn">Choose file</span>
-        </label>
-        <div class="pp-note">WAV / AIFF / FLAC / MP3 • up to 1 file</div>
-      </div>
-
-      <div id="fileList" class="pp-filelist" aria-live="polite"></div>
-      <div id="inlineError" class="pp-error" role="alert" aria-live="assertive"></div>
-
-      <div class="pp-actions">
-        <button id="analyzeBtn" aria-disabled="true" class="pp-primary" type="button">Analyze</button>
-        <button id="clearBtn" class="pp-ghost" type="button">Clear</button>
-      </div>
-    </section>
-
-    <section id="original-section" class="track-section">
-      <h2>Original</h2>
-      <div class="wf-row">
-        <div id="wf-original" class="wf"></div>
-        <button class="wf-btn" data-wf="original" aria-pressed="false" title="Play/Pause"></button>
-      </div>
-      <canvas id="timeline-canvas" class="timeline"></canvas>
-    </section>
-
-    <section id="outputs-section" class="outputs"></section>
-  </main>
-
-  <!-- Popup Modal -->
-  <div id="pp-modal" class="pp-modal" hidden>
-    <div class="pp-card">
-      <div class="pp-card-head">
-        <h3>Analyzing your mix…</h3>
-        <p>Measuring loudness, peaks and dynamics to set safe targets. Your master preview will be ready shortly; you can fine-tune to taste afterwards.</p>
-      </div>
-      <div class="pp-orb-wrap">
-        <canvas id="pp-orb"></canvas>
-        <div class="pp-orb-fallback"></div>
-      </div>
-      <div class="pp-progress">
-        <div id="pp-bar" class="bar indeterminate"></div>
-        <div id="pp-stage" class="stage">Starting…</div>
-        <div id="pp-flavor" class="flavor"></div>
+    <div id="pp-uploader" class="pp-uploader">
+      <input id="pp-file" type="file" accept=".wav,.aiff,.aif,.flac,.mp3" hidden />
+      <button id="pp-choose" class="pp-btn">Choose file</button>
+      <div class="pp-fileinfo" aria-live="polite">
+        <div class="pp-filemeta">No file selected</div>
+        <div class="pp-fileprog"><div class="bar" style="width:0%"></div></div>
+        <div id="pp-error" class="pp-error" role="alert" hidden></div>
       </div>
     </div>
-  </div>
 
-    <script src="/static/js/wavesurfer.min.js"></script>
-    <script src="/static/app.js"></script>
-  </body>
+    <button id="pp-analyze" class="pp-btn primary" disabled>Analyze</button>
+  </main>
+
+  <script src="/static/js/app.js"></script>
+</body>
 </html>
+
