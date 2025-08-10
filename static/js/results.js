@@ -1,121 +1,79 @@
 (() => {
-  // --- Global player registry to ensure only one plays at a time ---
   const PlayerBus = {
-    players: new Set(),
-    playing: null,
-    register(p) { this.players.add(p); },
-    unregister(p) { this.players.delete(p); if (this.playing === p) this.playing = null; },
-    requestPlay(p) {
-      if (this.playing && this.playing !== p) this.playing.pause();
-      this.playing = p;
+    cur: null,
+    claim(p) {
+      if (this.cur && this.cur !== p) this.cur.pause();
+      this.cur = p;
     },
-    notifyPause(p) {
-      if (this.playing === p) this.playing = null;
+    release(p) {
+      if (this.cur === p) this.cur = null;
     }
   };
 
-  // One shared AudioContext for the page
-  let AC = null;
-  function getAudioContext() {
-    if (!AC) AC = new (window.AudioContext || window.webkitAudioContext)();
-    return AC;
+  let AC;
+  function getAC() {
+    return AC || (AC = new (window.AudioContext || window.webkitAudioContext)());
   }
 
   class WaveformPlayer {
-    constructor({ container, audioUrl, accent = { a: "#50b4ff", b: "#78ffdc" } }) {
-      this.root = container;
-      this.url = audioUrl;
-      this.canvas = document.createElement("canvas");
-      this.canvas.setAttribute("aria-hidden", "true");
-      this.canvas.style.width = "100%";
-      this.canvas.style.height = "100%";
-      this.root.appendChild(this.canvas);
-
-      this.btn = container.parentElement.querySelector(".pp-play");
-      this.svgPlay = iconPlay();
-      this.svgPause = iconPause();
-      this.btn.innerHTML = ""; this.btn.appendChild(this.svgPlay);
-      this.btn.setAttribute("aria-pressed", "false");
-      this.btn.setAttribute("aria-label", "Play preview");
-
+    constructor(btn, canvas, url) {
+      this.btn = btn;
+      this.canvas = canvas;
+      this.url = url;
       this.buffer = null;
-      this.node = null;
-      this.gain = null;
-      this.startTime = 0;
+      this.source = null;
+      this.start = 0;
       this.offset = 0;
       this.playing = false;
-      this.gradient = accent;
-
-      this._resize = this.resize.bind(this);
-      this._onBtn = this.toggle.bind(this);
-      this.ro = new ResizeObserver(this._resize);
-      this.ro.observe(this.root);
-
-      PlayerBus.register(this);
-      this.init().catch(err => console.error("Waveform init failed:", err));
+      this.btn.appendChild(iconPlay());
+      this.btn.addEventListener('click', () => this.toggle());
+      this.ro = new ResizeObserver(() => this.render());
+      this.ro.observe(this.canvas);
+      this.load();
     }
 
-    async init() {
-      const ac = getAudioContext();
-
-      // Fetch & decode
-      const res = await fetch(this.url, { cache: "no-store" });
-      if (!res.ok) throw new Error(`Fetch failed ${res.status}`);
-      const arr = await res.arrayBuffer();
-      this.buffer = await ac.decodeAudioData(arr);
-
-      // Pre-render
-      this.renderWaveform();
-
-      // Wire button
-      this.btn.addEventListener("click", this._onBtn, false);
+    async load() {
+      try {
+        const res = await fetch(this.url, { cache: 'no-store' });
+        if (!res.ok) throw new Error(res.status);
+        const arr = await res.arrayBuffer();
+        this.buffer = await getAC().decodeAudioData(arr);
+        this.render();
+      } catch (e) {
+        console.warn('preview failed', e);
+        this.canvas.parentElement.textContent = 'Preview unavailable';
+        this.btn.disabled = true;
+      }
     }
 
-    resize() { this.renderWaveform(); }
-
-    renderWaveform() {
+    render() {
       if (!this.buffer) return;
-      const cs = getComputedStyle(this.root);
-      const cssW = parseFloat(cs.width);
-      const cssH = parseFloat(cs.height);
+      const cssW = this.canvas.clientWidth;
+      const cssH = this.canvas.clientHeight;
       const dpr = Math.max(1, window.devicePixelRatio || 1);
       const W = Math.max(200, Math.round(cssW * dpr));
       const H = Math.max(40, Math.round(cssH * dpr));
-      const ctx = this.canvas.getContext("2d", { alpha: true });
-
       this.canvas.width = W;
       this.canvas.height = H;
-
-      // Background (subtle glass) already via CSS; just draw waveform
+      const ctx = this.canvas.getContext('2d', { alpha: true });
       ctx.clearRect(0, 0, W, H);
 
-      const ch = Math.min(2, this.buffer.numberOfChannels);
-      const dataL = this.buffer.getChannelData(0);
-      const dataR = ch > 1 ? this.buffer.getChannelData(1) : null;
-
-      // Downsample to one column per pixel
-      const samples = dataL.length;
+      const data = this.buffer.getChannelData(0);
+      const samples = data.length;
       const step = Math.ceil(samples / W);
       const amp = H / 2;
-
-      // Envelope calculation (min/max) with light RMS fill
-      const grad = ctx.createLinearGradient(0, 0, W, 0);
-      grad.addColorStop(0, "rgba(80,180,255,0.95)");
-      grad.addColorStop(1, "rgba(120,255,220,0.95)");
-
-      ctx.lineWidth = Math.max(1, Math.floor(dpr));
-      ctx.strokeStyle = grad;
+      const css = getComputedStyle(document.documentElement);
+      const acc1 = css.getPropertyValue('--pp-accent').trim() || '#1ff1e9';
+      const acc2 = css.getPropertyValue('--pp-accent-2').trim() || acc1;
 
       // RMS underlay
       ctx.beginPath();
       for (let x = 0; x < W; x++) {
-        const start = x * step;
         let sum = 0, count = 0;
-        for (let i = 0; i < step && (start + i) < samples; i++) {
-          const l = dataL[start + i];
-          const r = dataR ? dataR[start + i] : l;
-          const m = (l + r) * 0.5;
-          sum += m * m;
+        const start = x * step;
+        for (let i = 0; i < step && start + i < samples; i++) {
+          const v = data[start + i];
+          sum += v * v;
           count++;
         }
         const rms = Math.sqrt(sum / Math.max(1, count));
@@ -123,242 +81,199 @@
         if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
       }
       for (let x = W - 1; x >= 0; x--) {
-        const start = x * step;
         let sum = 0, count = 0;
-        for (let i = 0; i < step && (start + i) < samples; i++) {
-          const l = dataL[start + i];
-          const r = dataR ? dataR[start + i] : l;
-          const m = (l + r) * 0.5;
-          sum += m * m;
+        const start = x * step;
+        for (let i = 0; i < step && start + i < samples; i++) {
+          const v = data[start + i];
+          sum += v * v;
           count++;
         }
         const rms = Math.sqrt(sum / Math.max(1, count));
         const y = amp + rms * amp * 0.9;
-        if (x === W - 1) ctx.lineTo(x, y); else ctx.lineTo(x, y);
+        ctx.lineTo(x, y);
       }
       ctx.closePath();
-      ctx.fillStyle = "rgba(120,255,220,0.12)";
+      ctx.fillStyle = hexToRgba(acc2, 0.12);
       ctx.fill();
 
       // Peak outline
+      const grad = ctx.createLinearGradient(0, 0, W, 0);
+      grad.addColorStop(0, acc1);
+      grad.addColorStop(1, acc2);
+      ctx.strokeStyle = grad;
+      ctx.lineWidth = Math.max(1, Math.floor(dpr));
       ctx.beginPath();
       for (let x = 0; x < W; x++) {
         const start = x * step;
-        let minv = 1, maxv = -1;
-        for (let i = 0; i < step && (start + i) < samples; i++) {
-          const l = dataL[start + i];
-          const r = dataR ? dataR[start + i] : l;
-          const v = (l + r) * 0.5;
-          if (v < minv) minv = v;
-          if (v > maxv) maxv = v;
+        let min = 1, max = -1;
+        for (let i = 0; i < step && start + i < samples; i++) {
+          const v = data[start + i];
+          if (v < min) min = v;
+          if (v > max) max = v;
         }
-        const yTop = amp + minv * amp;
-        if (x === 0) ctx.moveTo(x, yTop); else ctx.lineTo(x, yTop);
+        const y = amp + min * amp;
+        if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
       }
       for (let x = W - 1; x >= 0; x--) {
         const start = x * step;
-        let minv = 1, maxv = -1;
-        for (let i = 0; i < step && (start + i) < samples; i++) {
-          const l = dataL[start + i];
-          const r = dataR ? dataR[start + i] : l;
-          const v = (l + r) * 0.5;
-          if (v < minv) minv = v;
-          if (v > maxv) maxv = v;
+        let min = 1, max = -1;
+        for (let i = 0; i < step && start + i < samples; i++) {
+          const v = data[start + i];
+          if (v < min) min = v;
+          if (v > max) max = v;
         }
-        const yBot = amp + maxv * amp;
-        if (x === W - 1) ctx.lineTo(x, yBot); else ctx.lineTo(x, yBot);
+        const y = amp + max * amp;
+        ctx.lineTo(x, y);
       }
-      ctx.closePath();
       ctx.stroke();
 
-      // Playhead overlay (updated during playback)
-      this.playheadCtx = ctx; this.playheadW = W; this.playheadH = H;
-      this.lastHeadX = null;
-      this.drawPlayhead(0); // reset
+      this.ctx = ctx; this.W = W; this.H = H; this.lastHead = null;
+      this.drawHead(0);
     }
 
-    drawPlayhead(progress01) {
-      const ctx = this.playheadCtx;
-      if (!ctx) return;
-      // Re-render waveform first? not needed—just draw head after a light clear column
-      const x = Math.floor(progress01 * this.playheadW);
-      if (this.lastHeadX !== null) {
-        ctx.clearRect(this.lastHeadX - 1, 0, 3, this.playheadH);
-      }
-      // Head
-      ctx.fillStyle = "rgba(160,245,255,0.9)";
-      ctx.fillRect(x, 0, 2, this.playheadH);
-      this.lastHeadX = x;
-    }
-
-    _tick = () => {
-      if (!this.playing || !this.buffer) return;
-      const now = getAudioContext().currentTime;
-      const elapsed = now - this.startTime + this.offset;
-      const dur = this.buffer.duration;
-      if (elapsed >= dur) {
-        this.pause(true);
-        this.drawPlayhead(0);
-        return;
-      }
-      this.drawPlayhead(Math.max(0, Math.min(1, elapsed / dur)));
-      this.raf = requestAnimationFrame(this._tick);
-    }
-
-    play() {
-      if (!this.buffer) return;
-      const ac = getAudioContext();
-      if (ac.state === "suspended") ac.resume();
-
-      PlayerBus.requestPlay(this);
-
-      // create nodes
-      this.gain = ac.createGain();
-      this.node = ac.createBufferSource();
-      this.node.buffer = this.buffer;
-      this.node.connect(this.gain).connect(ac.destination);
-
-      const now = ac.currentTime;
-      this.startTime = now;
-      this.node.start(0, this.offset);
-      this.playing = true;
-      this.btn.setAttribute("aria-pressed", "true");
-      this.btn.setAttribute("aria-label", "Pause preview");
-      this.btn.innerHTML = ""; this.btn.appendChild(this.svgPause);
-      this.raf = requestAnimationFrame(this._tick);
-
-      this.node.onended = () => this.pause(true);
-    }
-
-    pause(ended = false) {
-      if (!this.playing) return;
-      try { this.node && this.node.stop(); } catch {}
-      if (this.node) { this.node.disconnect(); this.node = null; }
-      if (this.gain) { this.gain.disconnect(); this.gain = null; }
-
-      const ac = getAudioContext();
-      const now = ac.currentTime;
-      if (!ended) this.offset += (now - this.startTime);
-      else this.offset = 0;
-
-      this.playing = false;
-      cancelAnimationFrame(this.raf);
-      this.btn.setAttribute("aria-pressed", "false");
-      this.btn.setAttribute("aria-label", "Play preview");
-      this.btn.innerHTML = ""; this.btn.appendChild(this.svgPlay);
-      PlayerBus.notifyPause(this);
+    drawHead(p) {
+      if (!this.ctx) return;
+      if (this.lastHead !== null) this.ctx.clearRect(this.lastHead - 1, 0, 2, this.H);
+      const x = Math.floor(p * this.W);
+      this.ctx.fillStyle = hexToRgba('#a0f5ff', 0.9);
+      this.ctx.fillRect(x, 0, 1, this.H);
+      this.lastHead = x;
     }
 
     toggle() { this.playing ? this.pause() : this.play(); }
 
-    destroy() {
-      this.pause();
-      this.btn.removeEventListener("click", this._onBtn, false);
-      this.ro.disconnect();
-      PlayerBus.unregister(this);
-      this.root.innerHTML = "";
+    play() {
+      if (!this.buffer) return;
+      const ac = getAC();
+      if (ac.state === 'suspended') ac.resume();
+      PlayerBus.claim(this);
+      this.source = ac.createBufferSource();
+      this.source.buffer = this.buffer;
+      this.source.connect(ac.destination);
+      this.start = ac.currentTime;
+      this.source.start(0, this.offset);
+      this.playing = true;
+      this.btn.setAttribute('aria-pressed', 'true');
+      this.btn.setAttribute('aria-label', 'Pause preview');
+      this.btn.innerHTML = ''; this.btn.appendChild(iconPause());
+      this.raf = requestAnimationFrame(() => this.tick());
+      this.source.onended = () => this.pause(true);
+    }
+
+    tick() {
+      if (!this.playing) return;
+      const now = getAC().currentTime;
+      const prog = (now - this.start + this.offset) / this.buffer.duration;
+      if (prog >= 1) { this.pause(true); return; }
+      this.drawHead(prog);
+      this.raf = requestAnimationFrame(() => this.tick());
+    }
+
+    pause(ended = false) {
+      if (!this.playing) return;
+      try { this.source.stop(); } catch {}
+      this.source.disconnect();
+      const ac = getAC();
+      const now = ac.currentTime;
+      this.offset = ended ? 0 : this.offset + (now - this.start);
+      this.playing = false;
+      cancelAnimationFrame(this.raf);
+      this.btn.setAttribute('aria-pressed', 'false');
+      this.btn.setAttribute('aria-label', 'Play preview');
+      this.btn.innerHTML = ''; this.btn.appendChild(iconPlay());
+      PlayerBus.release(this);
+      this.drawHead(0);
     }
   }
 
-  function iconPlay() {
-    const svg = document.createElementNS("http://www.w3.org/2000/svg","svg");
-    svg.setAttribute("viewBox","0 0 24 24");
-    svg.innerHTML = `<path d="M8 5v14l11-7z"/>`;
-    return svg;
+  function svg(path) {
+    const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    s.setAttribute('viewBox', '0 0 24 24');
+    s.innerHTML = `<path d="${path}"/>`;
+    return s;
   }
-  function iconPause() {
-    const svg = document.createElementNS("http://www.w3.org/2000/svg","svg");
-    svg.setAttribute("viewBox","0 0 24 24");
-    svg.innerHTML = `<path d="M6 5h4v14H6zm8 0h4v14h-4z"/>`;
-    return svg;
-  }
-
-  // Build one card DOM
-  function buildCard({ id, title, audioUrl, metrics }) {
-    const card = document.createElement("article");
-    card.className = "pp-card";
-    card.id = `card-${id}`;
-    card.innerHTML = `
-      <h3>${escapeHtml(title)}</h3>
-      <div class="pp-wavewrap">
-        <button class="pp-play" type="button" aria-pressed="false" aria-label="Play preview"></button>
-        <div class="pp-wave"></div>
-      </div>
-      <table class="pp-metrics" role="table" aria-label="${escapeHtml(id)} metrics">
-        <thead></thead>
-        <tbody></tbody>
-      </table>
-    `;
-
-    // Waveform player
-    const wave = card.querySelector(".pp-wave");
-    new WaveformPlayer({ container: wave, audioUrl });
-
-    // Metrics table
-    const thead = card.querySelector("thead");
-    const tbody = card.querySelector("tbody");
-    renderMetricsTable(thead, tbody, metrics);
-
-    return card;
+  function iconPlay() { return svg('M8 5v14l11-7z'); }
+  function iconPause() { return svg('M6 5h4v14H6zm8 0h4v14h-4z'); }
+  function iconDownload() { return svg('M5 20h14v-2H5m7-14v9l3.5-3.5 1.42 1.42L12 19l-4.92-4.92L8.5 12.5 12 16V4z'); }
+  function hexToRgba(hex, a) {
+    hex = hex.trim();
+    if (hex.startsWith('#')) hex = hex.slice(1);
+    if (hex.length === 3) hex = hex.split('').map(c => c + c).join('');
+    const num = parseInt(hex, 16);
+    const r = (num >> 16) & 255, g = (num >> 8) & 255, b = num & 255;
+    return `rgba(${r},${g},${b},${a})`;
   }
 
-  function renderMetricsTable(thead, tbody, metrics) {
-    thead.innerHTML = "";
-    tbody.innerHTML = "";
-
-    // header row
-    const headTr = document.createElement("tr");
-    const thEmpty = document.createElement("th");
-    thEmpty.textContent = ""; thEmpty.className = "row-label";
-    headTr.appendChild(thEmpty);
+  function buildMetricsTable(metrics) {
+    const table = document.createElement('table');
+    table.className = 'pp-metrics';
+    const thead = document.createElement('thead');
+    const headTr = document.createElement('tr');
+    const empty = document.createElement('th'); empty.className = 'row-label'; headTr.appendChild(empty);
     metrics.labelRow.forEach(lbl => {
-      const th = document.createElement("th");
-      th.textContent = lbl; headTr.appendChild(th);
+      const th = document.createElement('th'); th.textContent = lbl; headTr.appendChild(th);
     });
-    thead.appendChild(headTr);
-
-    // input row (when present)
-    if (metrics.input && metrics.input.length) {
-      const trI = document.createElement("tr");
-      const thI = document.createElement("th");
-      thI.textContent = "Input"; thI.className = "row-label";
-      trI.appendChild(thI);
-      metrics.input.forEach(val => {
-        const td = document.createElement("td");
-        td.className = "value";
-        td.textContent = val;
-        trI.appendChild(td);
-      });
-      tbody.appendChild(trI);
+    thead.appendChild(headTr); table.appendChild(thead);
+    const tbody = document.createElement('tbody');
+    if (metrics.input) {
+      const tr = document.createElement('tr');
+      const th = document.createElement('th'); th.textContent = 'Input'; th.className = 'row-label'; tr.appendChild(th);
+      metrics.input.forEach(v => { const td = document.createElement('td'); td.className = 'value'; td.textContent = v; tr.appendChild(td); });
+      tbody.appendChild(tr);
     }
-
-    // output row
-    if (metrics.output && metrics.output.length) {
-      const trO = document.createElement("tr");
-      const thO = document.createElement("th");
-      thO.textContent = "Output"; thO.className = "row-label";
-      trO.appendChild(thO);
-      metrics.output.forEach(val => {
-        const td = document.createElement("td");
-        td.className = "value";
-        td.textContent = val;
-        trO.appendChild(td);
-      });
-      tbody.appendChild(trO);
+    if (metrics.output) {
+      const tr = document.createElement('tr');
+      const th = document.createElement('th'); th.textContent = 'Output'; th.className = 'row-label'; tr.appendChild(th);
+      metrics.output.forEach(v => { const td = document.createElement('td'); td.className = 'value'; td.textContent = v; tr.appendChild(td); });
+      tbody.appendChild(tr);
     }
+    table.appendChild(tbody);
+    return table;
   }
 
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, c => ({
-      "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"
-    }[c]));
+  function buildCard(session, cfg) {
+    const art = document.createElement('article');
+    art.className = 'pp-card';
+    art.id = `card-${cfg.id}`;
+    const h3 = document.createElement('h3'); h3.textContent = cfg.title; art.appendChild(h3);
+
+    const wavewrap = document.createElement('div'); wavewrap.className = 'pp-wavewrap';
+    const btn = document.createElement('button');
+    btn.className = 'pp-play';
+    btn.type = 'button';
+    btn.setAttribute('aria-pressed', 'false');
+    btn.setAttribute('aria-label', 'Play preview');
+    wavewrap.appendChild(btn);
+    const wave = document.createElement('div'); wave.className = 'pp-wave';
+    const canvas = document.createElement('canvas');
+    wave.appendChild(canvas); wavewrap.appendChild(wave);
+    art.appendChild(wavewrap);
+
+    art.appendChild(buildMetricsTable(cfg.metrics));
+
+    const downloads = document.createElement('div'); downloads.className = 'pp-downloads';
+    const wav = document.createElement('a'); wav.className = 'pp-dl'; wav.href = `/download/${session}/${cfg.wavKey}`; wav.appendChild(iconDownload()); wav.appendChild(document.createTextNode(' Download WAV'));
+    const info = document.createElement('a'); info.className = 'pp-dl'; info.href = `/download/${session}/${cfg.infoKey}`; info.appendChild(iconDownload()); info.appendChild(document.createTextNode(' Download INFO'));
+    downloads.appendChild(wav); downloads.appendChild(info); art.appendChild(downloads);
+
+    new WaveformPlayer(btn, canvas, cfg.processedUrl);
+    return art;
   }
 
-  // Public API
-  window.renderMasteringResults = function(session, cards) {
-    const mount = document.getElementById("pp-results");
-    if (!mount) return;
-    mount.innerHTML = "";
-    cards.forEach(c => mount.appendChild(buildCard(c)));
+  window.renderMasteringResults = function(session, cards, opts = {}) {
+    const showCustom = !!opts.showCustom;
+    const mount = document.getElementById('pp-results') || (() => {
+      const s = document.createElement('section'); s.id = 'pp-results'; s.className = 'pp-results'; s.setAttribute('aria-live', 'polite');
+      const ref = document.querySelector('.pp-fileinfo'); (ref?.parentNode || document.body).insertBefore(s, ref?.nextSibling || null);
+      return s;
+    })();
+    mount.innerHTML = '';
+    const order = ['club', 'stream', 'unlimited', 'custom'];
+    order.forEach(id => {
+      if (id === 'custom' && !showCustom) return;
+      const cfg = cards.find(c => c.id === id);
+      if (cfg) mount.appendChild(buildCard(session, cfg));
+    });
   };
 })();
+
