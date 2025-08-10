@@ -15,11 +15,14 @@ def _sine_wav_bytes(sr=48000, dur=0.8, freq=440.0):
     return buf
 
 
-def test_start_and_poll_progress():
+def test_start_and_poll_progress(tmp_path, monkeypatch):
+    monkeypatch.setenv('WORK_DIR', str(tmp_path/'work'))
     app = create_app()
     with app.test_client() as c:
-        data = { 'audio': ( _sine_wav_bytes(), 'test.wav') }
-        r = c.post('/start', data=data, content_type='multipart/form-data')
+        data = { 'file': ( _sine_wav_bytes(), 'test.wav') }
+        u = c.post('/upload', data=data, content_type='multipart/form-data')
+        assert u.status_code == 200
+        r = c.post('/start')
         assert r.status_code == 200
         session = r.get_json()['session']
         advanced = False

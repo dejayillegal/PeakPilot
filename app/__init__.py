@@ -1,32 +1,50 @@
 import os
-import uuid
 import threading
+import secrets
+from pathlib import Path
 from datetime import datetime, timezone
-from flask import Flask, request, jsonify, render_template, send_from_directory, abort, make_response
+from flask import Flask, render_template, request, jsonify, send_from_directory, abort, make_response, session as flask_session
 
-from .pipeline import run_pipeline, init_progress, read_json, atomic_write_json, UPLOAD_KEY
+from .pipeline import run_pipeline, init_progress, read_json, atomic_write_json
 
+ALLOWED = {'.wav', '.aiff', '.aif', '.flac', '.mp3'}
 MAX_UPLOAD_MB = 512
+
+
+def session_id():
+    if 'sid' not in flask_session:
+        flask_session['sid'] = secrets.token_hex(8)
+    return flask_session['sid']
+
+
+def ensure_dir(p: Path):
+    p.mkdir(parents=True, exist_ok=True)
+
+
+def has_audio(p: Path) -> bool:
+    if not p.exists():
+        return False
+    for x in p.iterdir():
+        if x.is_file() and x.suffix.lower() in ALLOWED and x.stat().st_size > 0:
+            return True
+    return False
 
 
 def create_app():
     app = Flask(__name__, static_folder='../static', template_folder='../templates')
-
-    # Core config
-    base = os.environ.get('UPLOAD_FOLDER', '/tmp/peakpilot')
-    os.makedirs(base, exist_ok=True)
-    app.config['UPLOAD_FOLDER'] = base
+    app.secret_key = os.environ.get('SECRET_KEY', 'dev')
     app.config['MAX_CONTENT_LENGTH'] = MAX_UPLOAD_MB * 1024 * 1024
 
-    # Routes
+    work_dir = Path(os.environ.get('WORK_DIR', 'work')).resolve()
+    ensure_dir(work_dir)
+
     @app.get('/')
     def index():
         return render_template('index.html')
 
     @app.get('/healthz')
     def healthz():
-        # Simple tool check
-        import shutil, subprocess
+        import shutil
         ffmpeg_ok = shutil.which('ffmpeg') is not None
         ffprobe_ok = shutil.which('ffprobe') is not None
         return jsonify({
@@ -34,48 +52,51 @@ def create_app():
             'time_utc': datetime.now(timezone.utc).isoformat(),
             'ffmpeg': ffmpeg_ok,
             'ffprobe': ffprobe_ok,
-            'upload_dir': app.config['UPLOAD_FOLDER']
+            'upload_dir': str(work_dir)
         }), 200
+
+    @app.post('/upload')
+    def upload():
+        sid = session_id()
+        updir = work_dir / sid / 'uploads'
+        ensure_dir(updir)
+        f = request.files.get('file')
+        if not f or f.filename == '':
+            return jsonify({"error": "NO_FILE: Select a file."}), 400
+        ext = Path(f.filename).suffix.lower()
+        if ext not in ALLOWED:
+            return jsonify({"error": "UNSUPPORTED: Use WAV/AIFF/FLAC/MP3."}), 400
+        dst = updir / f.filename
+        f.save(dst)
+        if dst.stat().st_size == 0:
+            dst.unlink(missing_ok=True)
+            return jsonify({"error": "EMPTY: File is empty."}), 400
+        return jsonify({"ok": True})
 
     @app.post('/start')
     def start():
-        if UPLOAD_KEY not in request.files:
-            return jsonify({'error': 'No file field named "audio"'}), 400
-        f = request.files[UPLOAD_KEY]
-        if not f.filename:
-            return jsonify({'error': 'Empty filename'}), 400
-
-        session = uuid.uuid4().hex[:12]
-        sess_dir = os.path.join(app.config['UPLOAD_FOLDER'], session)
-        up_dir = os.path.join(sess_dir, 'uploads')
-        out_dir = os.path.join(sess_dir, 'outputs')
-        os.makedirs(up_dir, exist_ok=True)
-        os.makedirs(out_dir, exist_ok=True)
-
-        # Save upload
-        in_path = os.path.join(up_dir, f.filename)
-        f.save(in_path)
-
-        # Seed progress BEFORE thread (fixes "Starting… forever")
-        progress_path = os.path.join(sess_dir, 'progress.json')
+        sid = session_id()
+        sess_dir = work_dir / sid
+        updir = sess_dir / 'uploads'
+        outdir = sess_dir / 'outputs'
+        ensure_dir(outdir)
+        if not has_audio(updir):
+            return jsonify({"error": "NO_AUDIO: Upload an audio file before analyzing."}), 400
+        # pick first audio file
+        files = [x for x in updir.iterdir() if x.is_file() and x.suffix.lower() in ALLOWED and x.stat().st_size > 0]
+        in_path = files[0]
+        progress_path = sess_dir / 'progress.json'
         init = init_progress()
         atomic_write_json(progress_path, init)
-
-        # Kick pipeline thread (daemon)
-        t = threading.Thread(
-            target=run_pipeline,
-            args=(session, sess_dir, in_path),
-            daemon=True
-        )
+        t = threading.Thread(target=run_pipeline, args=(sid, str(sess_dir), str(in_path)), daemon=True)
         t.start()
-
-        return jsonify({'session': session}), 200
+        return jsonify({"ok": True, "session": sid}), 200
 
     @app.get('/progress/<session>')
     def progress(session):
-        sess_dir = os.path.join(app.config['UPLOAD_FOLDER'], session)
-        progress_path = os.path.join(sess_dir, 'progress.json')
-        if not os.path.exists(progress_path):
+        sess_dir = work_dir / session
+        progress_path = sess_dir / 'progress.json'
+        if not progress_path.exists():
             return jsonify({'error': 'Session not found'}), 404
         data = read_json(progress_path)
         resp = make_response(jsonify(data))
@@ -84,11 +105,10 @@ def create_app():
 
     @app.get('/download/<session>/<path:filename>')
     def download(session, filename):
-        sess_dir = os.path.join(app.config['UPLOAD_FOLDER'], session)
-        out_dir = os.path.join(sess_dir, 'outputs')
-        if not os.path.commonpath([out_dir, os.path.join(out_dir, filename)]) == out_dir:
-            abort(400)
-        if not os.path.exists(os.path.join(out_dir, filename)):
+        sess_dir = work_dir / session
+        out_dir = sess_dir / 'outputs'
+        full = (out_dir / filename).resolve()
+        if not full.exists() or not str(full).startswith(str(out_dir)):
             abort(404)
         return send_from_directory(out_dir, filename, as_attachment=True)
 

@@ -1,0 +1,25 @@
+:root{
+  --pp-border:#141720;
+  --pp-bg2: var(--glass);
+  --pp-accent: var(--accent);
+}
+.pp-uploader { display:grid; gap:12px; }
+.pp-dropzone {
+  border:2px dashed var(--pp-border, #444);
+  border-radius:16px; padding:28px; text-align:center;
+  background: var(--pp-bg2, rgba(255,255,255,0.02));
+  transition: border-color .15s, background .15s, transform .06s;
+}
+.pp-dropzone:focus { outline:2px solid var(--pp-accent, #7ef); outline-offset:4px; }
+.pp-dropzone.pp-dragover { border-color: var(--pp-accent, #7ef); background: rgba(126,239,255,0.06); transform: scale(1.01);}
+.pp-dropicon { font-size:2rem; margin-bottom:.25rem; opacity:.9; }
+.pp-droptitle { font-weight:600; font-size:1.1rem; }
+.pp-choosebtn { display:inline-block; padding:.5rem .9rem; border-radius:999px; border:1px solid var(--pp-border,#444); }
+.pp-note { font-size:.85rem; opacity:.8; margin-top:.4rem; }
+.pp-filelist { display:grid; gap:8px; }
+.pp-filechip { display:flex; align-items:center; justify-content:space-between; padding:.6rem .8rem; border:1px solid var(--pp-border,#444); border-radius:12px; }
+.pp-filemeta { font-size:.9rem; opacity:.9; }
+.pp-remove { border:none; background:transparent; cursor:pointer; }
+.pp-error { color: #f66; min-height:1.2em; }
+.pp-actions { display:flex; gap:10px; justify-content:flex-start; align-items:center; }
+.pp-primary[disabled] { opacity:.5; cursor:not-allowed; }
