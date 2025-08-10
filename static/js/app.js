@@ -216,7 +216,6 @@ async function poll(url, originalBlobUrl, session){
           window.renderUploadedAudioCanvas(session);
         }
         const s = window.PeakPilot.session;
-        const base = `/download/${s}/`;
         if (typeof renderMasteringResultsInHero === 'function') {
           renderMasteringResultsInHero(s, [
             {
@@ -244,7 +243,8 @@ async function poll(url, originalBlobUrl, session){
           updateMasterCardsProgress(j);
         }
         if (window.drawPeakHighlightsOnOriginal){
-          fetch(base + encodeURIComponent("input_preview.wav")).then(r=>r.arrayBuffer()).then(ab=> window.PeakPilot.getAC().decodeAudioData(ab)).then(buf=> window.drawPeakHighlightsOnOriginal(loudCanvas, buf, -1.0)).catch(()=>{});
+          const pv = `/stream/${s}/` + encodeURIComponent("input_preview.wav");
+          fetch(pv).then(r=>r.arrayBuffer()).then(ab=> window.PeakPilot.getAC().decodeAudioData(ab)).then(buf=> window.drawPeakHighlightsOnOriginal(loudCanvas, buf, -1.0)).catch(()=>{});
         }
         const preTech = document.getElementById('preTech');
         if(preTech){

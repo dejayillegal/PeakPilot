@@ -13,6 +13,8 @@
     return DecodeCache.get(url);
   }
 
+  const previewFromDownload = (url) => url.replace("/download/","/stream/").replace(/([^/]+)\.wav$/,"$1_preview.wav");
+
   // ---------- DRAW HELPERS ----------
   function drawWave(ctx, buffer, W, H){
     const ch=Math.min(2,buffer.numberOfChannels), L=buffer.getChannelData(0), R=ch>1?buffer.getChannelData(1):null;
@@ -139,7 +141,13 @@
     async load(){
       try{
         this.state="loading";
-        this.buf=await decodeUrl(this.url);
+        try{
+          this.buf=await decodeUrl(this.url);
+        }catch{
+          const dl=this.url.replace("/stream/","/download/").replace(/_preview\.wav$/,".wav");
+          this.buf=await decodeUrl(dl);
+          this.url=dl;
+        }
         this.state="ready"; this.btn?.removeAttribute("disabled"); this.render();
       }catch(e){
         this.state="error"; this.btn?.setAttribute("disabled","disabled");
@@ -362,20 +370,21 @@
                             : 'Queued';
 
       if(st.state==='done' && !card.ready){
-        const base=`/download/${window.PeakPilot.session}/`;
-        card.linkWav.href= base+encodeURIComponent(card.wavKey);
-        card.linkInfo.href=base+encodeURIComponent(card.infoKey);
+        const baseDl=`/download/${window.PeakPilot.session}/`;
+        const dlUrl= baseDl+encodeURIComponent(card.wavKey);
+        const pvUrl= previewFromDownload(dlUrl);
+        card.linkWav.href= dlUrl;
+        card.linkInfo.href=baseDl+encodeURIComponent(card.infoKey);
         card.linkWav.removeAttribute('aria-disabled'); card.linkInfo.removeAttribute('aria-disabled');
         card.linkWav.removeAttribute('tabindex');      card.linkInfo.removeAttribute('tabindex');
         card.btn.removeAttribute('disabled');
 
-        // attach player
         const player = new TrackPlayer({
           button: card.btn,
           waveCanvas: card.wave,
           ribbonCanvas: card.ribbon,
           specCanvas: card.spec,
-          url: base + encodeURIComponent(card.wavKey),
+          url: pvUrl,
           onDrawOverlay: (pl)=> pl._drawTPHot()
         });
         card.player=player; card.ready=true;
@@ -387,18 +396,19 @@
       for (const [id, card] of MasterCards) {
         if (card.ready) continue;
         const base = `/download/${s}/`;
-        const url  = base + encodeURIComponent(card.wavKey);
+        const dlUrl  = base + encodeURIComponent(card.wavKey);
+        const pvUrl  = previewFromDownload(dlUrl);
         try {
-          const r = await fetch(url, { method:"GET", cache:"no-store" });
+          const r = await fetch(dlUrl, { method:"GET", cache:"no-store" });
           if (r.ok) {
-            card.linkWav.href = url;
+            card.linkWav.href = dlUrl;
             card.linkInfo.href = base + encodeURIComponent(card.infoKey);
             card.linkWav.removeAttribute('aria-disabled');
             card.linkInfo.removeAttribute('aria-disabled');
             card.linkWav.removeAttribute('tabindex');
             card.linkInfo.removeAttribute('tabindex');
             card.btn.removeAttribute('disabled');
-            const player = new TrackPlayer({ button:card.btn, waveCanvas:card.wave, ribbonCanvas:card.ribbon, specCanvas:card.spec, url, onDrawOverlay:(pl)=>pl._drawTPHot() });
+            const player = new TrackPlayer({ button:card.btn, waveCanvas:card.wave, ribbonCanvas:card.ribbon, specCanvas:card.spec, url: pvUrl, onDrawOverlay:(pl)=>pl._drawTPHot() });
             card.player = player; card.ready = true;
             console.warn(`[PP] Enabled ${id} via file presence (progress missing)`);
           }
@@ -411,7 +421,7 @@
   window.attachOriginalPlayer = async function(){
     const btn=document.getElementById('play'); const wave=document.getElementById('loudCanvas');
     if(!btn || !wave) return;
-    const base=`/download/${window.PeakPilot.session}/`; const url=base+encodeURIComponent("input_preview.wav");
+    const base=`/stream/${window.PeakPilot.session}/`; const url=base+encodeURIComponent("input_preview.wav");
     // Make a ribbon+spec for original as well (create under #preview)
     let ribbon=document.querySelector('#preview .pp-ribbon canvas'); let spec=document.querySelector('#preview .pp-spec canvas');
     if(!ribbon){
