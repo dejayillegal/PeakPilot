@@ -16,7 +16,7 @@ def client(tmp_path, monkeypatch):
     app.config['TESTING'] = True
     sessions = tmp_path / 'sessions'
     sessions.mkdir()
-    monkeypatch.setitem(app.config, 'SESSIONS_DIR', str(sessions))
+    monkeypatch.setitem(app.config, 'UPLOAD_ROOT', sessions)
     return app.test_client()
 
 

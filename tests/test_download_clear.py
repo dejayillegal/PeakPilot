@@ -18,7 +18,7 @@ def run_and_wait(client, sine_file):
 
 def test_download_and_checksum(client, sine_file):
     session = run_and_wait(client, sine_file)
-    sess_dir = os.path.join(client.application.config['SESSIONS_DIR'], session)
+    sess_dir = os.path.join(client.application.config['UPLOAD_ROOT'], session)
     with open(os.path.join(sess_dir, 'manifest.json')) as fh:
         manifest = json.load(fh)
     for key, meta in manifest.items():
@@ -37,7 +37,7 @@ def test_download_and_checksum(client, sine_file):
 
 def test_clear_removes_session(client, sine_file):
     session = run_and_wait(client, sine_file)
-    sess_dir = os.path.join(client.application.config['SESSIONS_DIR'], session)
+    sess_dir = os.path.join(client.application.config['UPLOAD_ROOT'], session)
     assert os.path.isdir(sess_dir)
     r = client.post('/clear', json={'session': session})
     assert r.status_code == 200

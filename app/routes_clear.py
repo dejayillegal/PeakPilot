@@ -12,6 +12,6 @@ def clear_route():
     session = data.get('session') if data else None
     if not session:
         return jsonify({'ok': False, 'error': 'missing session'}), 400
-    sess_dir = os.path.join(current_app.config['SESSIONS_DIR'], session)
+    sess_dir = os.path.join(current_app.config['UPLOAD_ROOT'], session)
     clear_session(sess_dir)
     return jsonify({'ok': True})
