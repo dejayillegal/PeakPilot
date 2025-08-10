@@ -5,9 +5,11 @@
   --pp-border: rgba(255,255,255,0.08);
   --pp-text: #eaf6ff;
   --pp-subtle: rgba(234,246,255,0.75);
-  --pp-accent-1: #50b4ff;
-  --pp-accent-2: #78ffdc;
-  --pp-accent-3: #9fe1ff;
+  /* respect app accent */
+  --pp-accent: var(--accent);
+  --pp-accent-1: var(--accent);
+  --pp-accent-2: var(--accent-2);
+  --pp-accent-3: var(--accent-2);
   --pp-good: #2bd38e;
 }
 
@@ -40,7 +42,7 @@
   margin: 0 0 10px 0;
   font-size: 0.98rem;
   letter-spacing: .2px;
-  color: var(--pp-text);
+  color: var(--pp-accent);
 }
 
 /* Waveform row */
@@ -66,6 +68,7 @@
   border-color: rgba(120,255,220,0.25);
 }
 .pp-play svg { width: 16px; height: 16px; fill: var(--pp-accent-3); }
+.pp-play[disabled] { opacity: .5; cursor: not-allowed; }
 
 .pp-wave {
   position: relative;
@@ -88,7 +91,7 @@
 }
 .pp-metrics thead th {
   background: rgba(255,255,255,0.04);
-  color: var(--pp-subtle);
+  color: var(--pp-accent);
   font-weight: 600;
 }
 .pp-metrics th, .pp-metrics td {
@@ -117,4 +120,28 @@
   background: linear-gradient(90deg, var(--pp-accent-1), var(--pp-accent-2));
   opacity: .18;
   border-radius: 999px;
+}
+
+/* Downloads */
+.pp-downloads {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+.pp-dl {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--pp-accent);
+  text-decoration: none;
+  font-size: 0.9rem;
+}
+.pp-dl svg {
+  width: 16px;
+  height: 16px;
+  fill: var(--pp-accent);
+}
+.pp-dl:hover {
+  text-decoration: underline;
 }

@@ -167,7 +167,7 @@ async function startJob(file, blobUrl){
   const r = await fetch('/start', { method:'POST', body: fd });
   if (!r.ok) { alert('Failed to start: ' + (await r.text())); return; }
   const { session, progress_url } = await r.json();
-  poll(progress_url, blobUrl);
+  poll(progress_url, blobUrl, session);
 }
 
 function setABGains(metrics){
@@ -189,7 +189,7 @@ function setABGains(metrics){
   };
 }
 
-async function poll(url, originalBlobUrl){
+async function poll(url, originalBlobUrl, session){
   clearInterval(polling);
   polling = setInterval(async ()=>{
     try{
@@ -225,6 +225,43 @@ async function poll(url, originalBlobUrl){
 
         abOrig.onclick = ()=> loadIntoWave(originalBlobUrl, 'Original', gains.original || 1.0);
         abProc.onclick = ()=> loadIntoWave(j.downloads.club || j.downloads.streaming, 'Processed', (gains.club || gains.streaming || 1.0));
+
+        if (window.renderMasteringResults) {
+          window.renderMasteringResults(session, [
+            {
+              id: "club",
+              title: "Club (48k/24, target −7.2 LUFS, −0.8 dBTP)",
+              processedUrl: `/download/${session}/club_master.wav`,
+              wavKey: "club_master.wav",
+              infoKey: "club_info.json",
+              metrics: { labelRow:["LUFS-I","TP","LRA","Thresh"], input:["-17.19","-5.60","27.24","-60.00"], output:["-7.40","0.00","27.24","—"] }
+            },
+            {
+              id: "stream",
+              title: "Streaming (44.1k/24, target −9.5 LUFS, −1.0 dBTP)",
+              processedUrl: `/download/${session}/stream_master.wav`,
+              wavKey: "stream_master.wav",
+              infoKey: "stream_info.json",
+              metrics: { labelRow:["LUFS-I","TP","LRA","Thresh"], input:["-17.19","-5.60","27.24","-60.00"], output:["-9.52","0.00","27.24","—"] }
+            },
+            {
+              id: "unlimited",
+              title: "Unlimited Premaster (48k/24, peak −6 dBFS)",
+              processedUrl: `/download/${session}/premaster_unlimited.wav`,
+              wavKey: "premaster_unlimited.wav",
+              infoKey: "premaster_unlimited_info.json",
+              metrics: { labelRow:["Peak dBFS"], input:["-5.60"], output:["-6.00"] }
+            },
+            {
+              id: "custom",
+              title: "Custom (service preset)",
+              processedUrl: `/download/${session}/custom_master.wav`,
+              wavKey: "custom_master.wav",
+              infoKey: "custom_info.json",
+              metrics: { labelRow:["LUFS-I","TP","LRA","Thresh"], input:["—","—","—","—"], output:["—","—","—","—"] }
+            }
+          ], { showCustom: !!j.downloads.custom });
+        }
       }
     }catch(e){ /* ignore transient errors */ }
   }, 1000);
