@@ -53,3 +53,16 @@
 .pp-dl:hover { border-color: rgba(120,255,220,.25); box-shadow: 0 0 16px rgba(120,255,220,.12); }
 .pp-dl[aria-disabled="true"] { pointer-events:none; opacity:.55; }
 .pp-dl .emo { font-size:14px; line-height:1; }
+/* axis labels for the spectrum */
+.pp-spec .axis-label {
+  position:absolute;
+  font-size: 10px;
+  color: rgba(234,246,255,0.75);
+  pointer-events:none;
+  transform: translate(-50%, -50%);
+  white-space: nowrap;
+}
+.pp-spec .axis-label.y {
+  left: 6px;
+  transform: translate(0, -50%);
+}
