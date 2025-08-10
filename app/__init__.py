@@ -2,10 +2,26 @@ import os, uuid, threading, json
 from flask import Flask, request, jsonify, send_from_directory, render_template, make_response
 
 from .pipeline import run_pipeline, new_session_dir, write_json_atomic, progress_path, ffprobe_ok
-
-
 def create_app():
-    app = Flask(__name__, template_folder="templates", static_folder="static")
+    """Create and configure the Flask application.
+
+    The project keeps its ``templates`` and ``static`` directories at the
+    repository root rather than inside the ``app`` package.  When running the
+    application Flask would look for these directories relative to the package
+    and consequently fail to locate them, raising ``TemplateNotFound`` for
+    ``index.html``.
+
+    Determine the project root and point Flask at the correct directories so
+    that template rendering and static file serving work in both development and
+    production environments.
+    """
+
+    # Locate repository root (parent directory of this file's package)
+    root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    template_dir = os.path.join(root_dir, "templates")
+    static_dir = os.path.join(root_dir, "static")
+
+    app = Flask(__name__, template_folder=template_dir, static_folder=static_dir)
     app.config["UPLOAD_FOLDER"] = "/tmp/peakpilot"
     app.config["MAX_CONTENT_LENGTH"] = 512 * 1024 * 1024
     os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
