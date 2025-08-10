@@ -1,4 +1,5 @@
 import json
+import os
 import uuid
 import hashlib
 import zipfile
@@ -55,11 +56,22 @@ def run(cmd: List[str], timeout: int | None = None):
     return p.returncode, p.stdout, p.stderr
 
 def ffprobe_info(path: Path) -> dict:
+    """Very small substitute for ``ffprobe`` using ``soundfile``.
+
+    The real application would invoke ffprobe; for tests we only need the
+    duration which ``soundfile`` can provide.  Any exception is bubbled up so
+    callers can handle invalid audio files.
+    """
     with sf.SoundFile(path) as f:
         return {"format": {"duration": f.frames / f.samplerate}}
 
+
 def validate_upload(path: Path, max_minutes: int = 20):
-    info = ffprobe_info(path)
+    """Validate that the uploaded file looks like audio and is not too long."""
+    try:
+        info = ffprobe_info(path)
+    except Exception as exc:  # pragma: no cover - defensive
+        raise RuntimeError("Unrecognized or corrupt audio file") from exc
     dur = float(info["format"]["duration"])
     if dur <= 0:
         raise RuntimeError("Unrecognized or zero-length audio")
@@ -68,7 +80,10 @@ def validate_upload(path: Path, max_minutes: int = 20):
 
 
 def write_json(path: Path, data: dict):
-    path.write_text(json.dumps(data))
+    """Atomically write JSON to ``path``."""
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data))
+    os.replace(tmp, path)
 
 def read_json(path: Path, default: dict) -> dict:
     return json.loads(path.read_text()) if path.exists() else default
@@ -85,12 +100,17 @@ def progress_path(session: str) -> Path:
 
 
 def base_progress() -> dict:
-    """Baseline progress structure written to progress.json."""
+    """Baseline progress structure written to ``progress.json``.
+
+    Mirrors the contract defined in the specification.  All fields are present
+    from the start so clients never need to guard against missing keys.
+    """
     return {
         "percent": 0,
         "phase": "starting",
         "message": "Starting…",
         "done": False,
+        "error": None,
         "downloads": {
             "club": None,
             "streaming": None,
@@ -104,23 +124,59 @@ def base_progress() -> dict:
             "streaming": {"input": {}, "output": {}},
             "premaster": {"input": {}, "output": {}},
             "custom": {"input": {}, "output": {}},
-            "advisor": {"input_I": None, "input_TP": None, "input_LRA": None},
+            "advisor": {
+                "recommended_preset": "",
+                "input_I": None,
+                "input_TP": None,
+                "input_LRA": None,
+                "analysis": {},
+                "ai_adjustments": {},
+            },
         },
         "timeline": {"sec": [], "short_term": [], "tp_flags": []},
     }
 
 
-def update_progress(session: str, patch: dict):
+def update_progress(
+    session: str,
+    percent: int | None = None,
+    phase: str | None = None,
+    message: str | None = None,
+    patch: Dict[str, Any] | None = None,
+    done: bool | None = None,
+    error: str | None = None,
+) -> None:
+    """Merge progress updates into the session's ``progress.json``.
+
+    ``patch`` can contain nested dictionaries that will be merged recursively.
+    Any provided ``percent`` >= 100 will automatically mark the task as done.
+    """
     p = progress_path(session)
     data = read_json(p, base_progress())
-    def merge(a,b):
-        for k,v in b.items():
-            if isinstance(v, dict) and isinstance(a.get(k), dict):
-                merge(a[k], v)
-            else:
-                a[k]=v
-    merge(data, patch)
-    data['done'] = data.get('percent',0) >= 100
+
+    if percent is not None:
+        data["percent"] = percent
+    if phase is not None:
+        data["phase"] = phase
+    if message is not None:
+        data["message"] = message
+    if done is not None:
+        data["done"] = done
+    if error is not None:
+        data["error"] = error
+
+    if patch:
+        def merge(a: dict, b: dict):
+            for k, v in b.items():
+                if isinstance(v, dict) and isinstance(a.get(k), dict):
+                    merge(a[k], v)
+                else:
+                    a[k] = v
+        merge(data, patch)
+
+    if data.get("percent", 0) >= 100:
+        data["done"] = True
+
     write_json(p, data)
 
 
@@ -210,62 +266,225 @@ def mix_stems_to_wav(stems: Dict[str, Path], gains: Dict[str,float], out_path: P
 
 # ---------- pipeline ----------
 
-def run_pipeline(session: str, src_path: Path, params: dict, stems: Dict[str, Path] | None, gains: Dict[str,float] | None):
+def run_pipeline(session: str, src_path: Path, params: dict, stems: Dict[str, Path] | None, gains: Dict[str, float] | None):
+    """Main background job executed for each upload.
+
+    The real project performs heavy DSP with ffmpeg.  Here we mimic the
+    behaviour using lightweight numpy/soundfile operations so tests run fast
+    while still exercising the progress lifecycle.
+    """
+
     app = APP or current_app._get_current_object()
     with app.app_context():
-        validate_upload(src_path)
-        timeline = ebur128_timeline(src_path)
-        inp = measure_loudnorm_json(src_path)
-        peak_in = measure_peak_dbfs(src_path)
-        update_progress(session, {
-            "percent": 10,
-            "phase": "analyze",
-            "message": "Analyzing input…",
-            "metrics": {
-                "advisor": {"input_I": inp["input_i"], "input_LRA": inp["input_lra"], "input_TP": inp["input_tp"]},
-                "club": {"input": {"I": inp["input_i"], "TP": inp["input_tp"], "LRA": inp["input_lra"], "threshold": inp["input_thresh"]}},
-                "streaming": {"input": {"I": inp["input_i"], "TP": inp["input_tp"], "LRA": inp["input_lra"], "threshold": inp["input_thresh"]}},
-                "premaster": {"input": {"peak_dbfs": peak_in}},
-            },
-            "timeline": timeline,
-        })
+        try:
+            # --- analysis stage -------------------------------------------------
+            validate_upload(src_path)
+            timeline = ebur128_timeline(src_path)
+            inp = measure_loudnorm_json(src_path)
+            peak_in = measure_peak_dbfs(src_path)
+            update_progress(
+                session,
+                5,
+                "analyze",
+                "Analyzing input…",
+                patch={
+                    "metrics": {
+                        "advisor": {
+                            "input_I": inp["input_i"],
+                            "input_LRA": inp["input_lra"],
+                            "input_TP": inp["input_tp"],
+                        },
+                        "club": {
+                            "input": {
+                                "I": inp["input_i"],
+                                "TP": inp["input_tp"],
+                                "LRA": inp["input_lra"],
+                                "threshold": inp["input_thresh"],
+                            }
+                        },
+                        "streaming": {
+                            "input": {
+                                "I": inp["input_i"],
+                                "TP": inp["input_tp"],
+                                "LRA": inp["input_lra"],
+                                "threshold": inp["input_thresh"],
+                            }
+                        },
+                        "premaster": {"input": {"peak_dbfs": peak_in}},
+                    },
+                    "timeline": timeline,
+                },
+            )
 
-        out_dir = src_path.parent
-        stem = src_path.stem
+            # --- AI reference stage -------------------------------------------
+            from . import ai_module
 
-        club_out = out_dir / f"{stem}__CLUB.wav"
-        loudnorm_two_pass(src_path, club_out, I=-7.2, TP=-0.8, LRA=11.0)
-        club_m = measure_loudnorm_json(club_out)
-        update_progress(session, {"percent": 40, "phase": "club", "message": "Club…", "metrics": {"club": {"output": {"I": club_m['input_i'], "TP": club_m['input_tp'], "LRA": club_m['input_lra'], "threshold": club_m['input_thresh']}}}})
+            features, ai_adj, model, model_file, fingerprint, analysis = ai_module.analyze_track(
+                src_path, timeline
+            )
 
-        streaming_out = out_dir / f"{stem}__STREAMING.wav"
-        loudnorm_two_pass(src_path, streaming_out, I=-9.5, TP=-1.0, LRA=11.0)
-        str_m = measure_loudnorm_json(streaming_out)
-        update_progress(session, {"percent": 60, "phase": "streaming", "message": "Streaming…", "metrics": {"streaming": {"output": {"I": str_m['input_i'], "TP": str_m['input_tp'], "LRA": str_m['input_lra'], "threshold": str_m['input_thresh']}}}})
+            update_progress(
+                session,
+                15,
+                "reference",
+                "Dialing in reference curve…",
+                patch={
+                    "metrics": {
+                        "advisor": {
+                            "recommended_preset": params.get("preset", "club"),
+                            "analysis": analysis,
+                            "ai_adjustments": ai_adj,
+                            "input_I": inp["input_i"],
+                            "input_TP": inp["input_tp"],
+                            "input_LRA": inp["input_lra"],
+                        }
+                    }
+                },
+            )
 
-        premaster_out = out_dir / f"{stem}__PREMASTER.wav"
-        normalize_peak_to(src_path, premaster_out, target_dbfs=-6.0)
-        peak_out = measure_peak_dbfs(premaster_out)
-        update_progress(session, {"percent": 80, "phase": "premaster", "message": "Premaster…", "metrics": {"premaster": {"output": {"peak_dbfs": peak_out}}}})
+            out_dir = src_path.parent
+            stem = src_path.stem
 
-        session_json = out_dir / "session.json"
-        write_json(session_json, {"session": session})
-        zip_path = out_dir / f"{stem}__bundle.zip"
-        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as z:
-            z.write(club_out, club_out.name)
-            z.write(streaming_out, streaming_out.name)
-            z.write(premaster_out, premaster_out.name)
-            z.write(session_json, session_json.name)
-        base = f"/download/{session}/"
-        downloads = {
-            "club": base + club_out.name,
-            "streaming": base + streaming_out.name,
-            "premaster": base + premaster_out.name,
-            "custom": None,
-            "zip": base + zip_path.name,
-            "session_json": base + session_json.name,
-        }
-        update_progress(session, {"percent": 100, "phase": "done", "message": "Done", "downloads": downloads})
+            # apply AI deltas with clamping
+            club_I = -7.2 + ai_adj["club"]["dI"]
+            club_TP = min(-0.8, -0.8 + ai_adj["club"]["dTP"])
+            club_LRA = 11.0 + ai_adj["club"]["dLRA"]
+            str_I = -9.5 + ai_adj["streaming"]["dI"]
+            str_TP = min(-1.0, -1.0 + ai_adj["streaming"]["dTP"])
+            str_LRA = 11.0 + ai_adj["streaming"]["dLRA"]
+
+            # --- club render ---------------------------------------------------
+            club_out = out_dir / f"{stem}__CLUB.wav"
+            loudnorm_two_pass(src_path, club_out, I=club_I, TP=club_TP, LRA=club_LRA)
+            club_m = measure_loudnorm_json(club_out)
+            update_progress(
+                session,
+                45,
+                "club",
+                "Rendering Club…",
+                patch={
+                    "metrics": {
+                        "club": {
+                            "output": {
+                                "I": club_m["input_i"],
+                                "TP": club_m["input_tp"],
+                                "LRA": club_m["input_lra"],
+                                "threshold": club_m["input_thresh"],
+                            }
+                        }
+                    }
+                },
+            )
+
+            # --- streaming render ---------------------------------------------
+            streaming_out = out_dir / f"{stem}__STREAMING.wav"
+            loudnorm_two_pass(src_path, streaming_out, I=str_I, TP=str_TP, LRA=str_LRA)
+            str_m = measure_loudnorm_json(streaming_out)
+            update_progress(
+                session,
+                70,
+                "streaming",
+                "Rendering Streaming…",
+                patch={
+                    "metrics": {
+                        "streaming": {
+                            "output": {
+                                "I": str_m["input_i"],
+                                "TP": str_m["input_tp"],
+                                "LRA": str_m["input_lra"],
+                                "threshold": str_m["input_thresh"],
+                            }
+                        }
+                    }
+                },
+            )
+
+            # --- premaster ----------------------------------------------------
+            premaster_out = out_dir / f"{stem}__PREMASTER.wav"
+            normalize_peak_to(src_path, premaster_out, target_dbfs=-6.0)
+            peak_out = measure_peak_dbfs(premaster_out)
+            update_progress(
+                session,
+                85,
+                "premaster",
+                "Preparing Unlimited Premaster…",
+                patch={
+                    "metrics": {"premaster": {"output": {"peak_dbfs": peak_out}}}
+                },
+            )
+
+            # --- package ------------------------------------------------------
+            session_json = out_dir / "session.json"
+            metrics_current = read_json(progress_path(session), base_progress())["metrics"]
+            outputs = {}
+            for name, pth in {
+                "club": club_out,
+                "streaming": streaming_out,
+                "premaster": premaster_out,
+            }.items():
+                info = sf.info(str(pth))
+                outputs[name] = {
+                    "file": pth.name,
+                    "sha256": checksum_sha256(pth),
+                    "sr": info.samplerate,
+                    "bits": params.get("bits", 24),
+                    "dur_sec": float(info.frames) / info.samplerate,
+                }
+
+            session_data = {
+                "version": "1.0",
+                "time_utc": datetime.utcnow().isoformat() + "Z",
+                "preset_used": params.get("preset", "club"),
+                "params": params,
+                "metrics": metrics_current,
+                "timeline": timeline,
+                "outputs": outputs,
+                "ai_model": {
+                    "present": True,
+                    "adjustments": ai_adj,
+                    "fingerprint": fingerprint,
+                },
+            }
+            write_json(session_json, session_data)
+
+            zip_path = out_dir / f"{stem}__bundle.zip"
+            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
+                for pth in [club_out, streaming_out, premaster_out, session_json]:
+                    z.write(pth, pth.name)
+
+            base = f"/download/{session}/"
+            downloads = {
+                "club": base + club_out.name,
+                "streaming": base + streaming_out.name,
+                "premaster": base + premaster_out.name,
+                "custom": None,
+                "zip": base + zip_path.name,
+                "session_json": base + session_json.name,
+            }
+            update_progress(session, 95, "package", "Packaging downloads…", patch={"downloads": downloads})
+
+            update_progress(session, 100, "done", "Ready", done=True)
+
+            ai_module.update_model(
+                model,
+                model_file,
+                fingerprint,
+                features,
+                {"I": club_I, "TP": club_TP, "LRA": club_LRA},
+                club_m,
+                {"I": str_I, "TP": str_TP, "LRA": str_LRA},
+                str_m,
+            )
+
+        except Exception as e:  # pragma: no cover - exercised via tests
+            update_progress(
+                session,
+                phase="error",
+                message="Processing failed",
+                error=str(e),
+                done=True,
+            )
+            return
 
 
 __all__ = [
