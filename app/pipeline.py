@@ -72,6 +72,8 @@ def read_json(path: str) -> Dict[str, Any]:
 def update_progress(sess_dir: str, **fields):
     p = progress_path(sess_dir)
     data = {
+        "pct": 0,
+        "status": "starting",
         "percent": 0,
         "phase": "starting",
         "message": "",
@@ -93,13 +95,33 @@ def update_progress(sess_dir: str, **fields):
             },
         },
         "timeline": {"sec": [], "short_term": [], "tp_flags": []},
+        "masters": {
+            "club": {"state": "queued", "pct": 0, "message": ""},
+            "stream": {"state": "queued", "pct": 0, "message": ""},
+            "unlimited": {"state": "queued", "pct": 0, "message": ""},
+            "custom": {"state": "queued", "pct": 0, "message": ""},
+        },
     }
     if os.path.exists(p):
         try:
             data = read_json(p)
         except Exception:
             pass
+    masters = fields.pop("masters", None)
     data.update({k: v for k, v in fields.items() if v is not None})
+    # keep legacy aliases for callers still expecting percent/phase
+    if "pct" in data:
+        data["percent"] = data["pct"]
+    if "status" in data:
+        data["phase"] = data["status"]
+    if masters:
+        data.setdefault("masters", {})
+        for key, val in masters.items():
+            base = data["masters"].get(key, {"state": "queued", "pct": 0, "message": ""})
+            for k, v in val.items():
+                if v is not None:
+                    base[k] = v
+            data["masters"][key] = base
     write_json_atomic(p, data)
 
 
@@ -188,6 +210,7 @@ def normalize_peak_to(src, dst, peak_dbfs=-6.0, sr=48000, bits=24, dither="trian
 
 
 def run_pipeline(session: str, sess_dir: str, src_path: str, params: Dict[str, Any], stems, gains):
+    current_target = None
     try:
         manifest = {}
         def add_manifest(key, mime):
@@ -195,7 +218,7 @@ def run_pipeline(session: str, sess_dir: str, src_path: str, params: Dict[str, A
             assert f.exists() and f.stat().st_size > 0, f"Missing output: {key}"
             manifest[key] = {"filename": key, "type": mime}
         # --- analysis stage -------------------------------------------------
-        update_progress(sess_dir, percent=5, phase="analyze", message="Analyzing input…")
+        update_progress(sess_dir, pct=5, status="analyzing", message="Analyzing input…")
         info = ffprobe_info(src_path)
         validate_upload(info)
         # create lightweight preview for client-side waveform
@@ -241,10 +264,11 @@ def run_pipeline(session: str, sess_dir: str, src_path: str, params: Dict[str, A
         data["timeline"] = tl
         write_json_atomic(progress_path(sess_dir), data)
 
-        update_progress(sess_dir, percent=15, phase="reference", message="Dialing in reference curve…")
+        update_progress(sess_dir, pct=15, status="mastering", message="Dialing in reference curve…")
 
         # --- club master ----------------------------------------------------
-        update_progress(sess_dir, percent=45, phase="club", message="Rendering Club…")
+        current_target = "club"
+        update_progress(sess_dir, pct=45, status="mastering", message="Rendering Club…", masters={"club": {"state": "rendering", "pct": 0, "message": "Rendering..."}})
         club_wav = os.path.join(sess_dir, "club_master.wav")
         loudnorm_two_pass(src_path, club_wav, I=-7.2 + ai_adj["club"]["dI"], TP=-0.8 + ai_adj["club"]["dTP"], LRA=11, sr=48000, bits=24)
         club_metrics = measure_loudnorm_json(club_wav)
@@ -267,9 +291,11 @@ def run_pipeline(session: str, sess_dir: str, src_path: str, params: Dict[str, A
             "sha256": sha,
         }
         write_json_atomic(progress_path(sess_dir), d)
+        update_progress(sess_dir, masters={"club": {"state": "done", "pct": 100, "message": "Ready"}})
 
         # --- streaming master ----------------------------------------------
-        update_progress(sess_dir, percent=70, phase="streaming", message="Rendering Streaming…")
+        current_target = "stream"
+        update_progress(sess_dir, pct=70, status="mastering", message="Rendering Streaming…", masters={"stream": {"state": "rendering", "pct": 0, "message": "Rendering..."}})
         streaming_wav = os.path.join(sess_dir, "stream_master.wav")
         loudnorm_two_pass(src_path, streaming_wav, I=-9.5 + ai_adj["streaming"]["dI"], TP=-1.0 + ai_adj["streaming"]["dTP"], LRA=11, sr=44100, bits=24)
         str_metrics = measure_loudnorm_json(streaming_wav)
@@ -292,9 +318,11 @@ def run_pipeline(session: str, sess_dir: str, src_path: str, params: Dict[str, A
             "sha256": sha,
         }
         write_json_atomic(progress_path(sess_dir), d)
+        update_progress(sess_dir, masters={"stream": {"state": "done", "pct": 100, "message": "Ready"}})
 
         # --- premaster ------------------------------------------------------
-        update_progress(sess_dir, percent=85, phase="premaster", message="Preparing Unlimited Premaster…")
+        current_target = "unlimited"
+        update_progress(sess_dir, pct=85, status="mastering", message="Preparing Unlimited Premaster…", masters={"unlimited": {"state": "rendering", "pct": 0, "message": "Rendering..."}})
         premaster_wav = os.path.join(sess_dir, "premaster_unlimited.wav")
         normalize_peak_to(src_path, premaster_wav, peak_dbfs=-6.0, sr=48000, bits=24)
         peak_out = measure_peak_dbfs(premaster_wav)
@@ -310,11 +338,13 @@ def run_pipeline(session: str, sess_dir: str, src_path: str, params: Dict[str, A
         d["downloads"]["premaster"] = os.path.basename(premaster_wav)
         d["metrics"]["premaster"]["output"] = {"peak_dbfs": peak_out, "sr": info_out["sr"], "bits": 24, "sha256": sha}
         write_json_atomic(progress_path(sess_dir), d)
+        update_progress(sess_dir, masters={"unlimited": {"state": "done", "pct": 100, "message": "Ready"}})
 
         root = Path(sess_dir)
 
         # --- package --------------------------------------------------------
-        update_progress(sess_dir, percent=95, phase="package", message="Packaging downloads…")
+        current_target = None
+        update_progress(sess_dir, pct=95, status="finalizing", message="Packaging downloads…")
         # build session json
         d = read_json(progress_path(sess_dir))
         session_json = {
@@ -361,9 +391,10 @@ def run_pipeline(session: str, sess_dir: str, src_path: str, params: Dict[str, A
         write_manifest(root, manifest)
 
         # --- done -----------------------------------------------------------
-        update_progress(sess_dir, percent=100, phase="done", message="Ready", done=True, error=None)
+        update_progress(sess_dir, pct=100, status="done", message="Ready", done=True, error=None)
     except Exception as e:
-        update_progress(sess_dir, phase="error", message="Processing failed", error=str(e), done=True)
+        masters_err = {current_target: {"state": "error", "message": str(e)}} if current_target else None
+        update_progress(sess_dir, status="error", message="Processing failed", error=str(e), done=True, masters=masters_err)
 
 
 __all__ = [

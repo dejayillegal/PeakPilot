@@ -10,7 +10,72 @@
     return AC || (AC = window.PeakPilot._ac = new (window.AudioContext||window.webkitAudioContext)());
   }
 
-  class WaveformPlayer {
+  const MasterCards = new Map(); // id -> {el, btn, pill, linkWav, linkInfo, wavKey, infoKey, ready:false, player:null}
+
+  function registerCard(id, artEl, wavKey, infoKey){
+    MasterCards.set(id, {
+      id,
+      el: artEl,
+      btn: artEl.querySelector('.pp-play'),
+      pill: artEl.querySelector('.pp-statepill'),
+      linkWav: artEl.querySelector('.pp-dl[data-key="wav"]'),
+      linkInfo: artEl.querySelector('.pp-dl[data-key="info"]'),
+      wavKey, infoKey,
+      ready:false,
+      player:null
+    });
+  }
+
+  function updateMasterProgress(progress){
+    const m = progress.masters || {};
+    // render cards on first progress tick
+    if(MasterCards.size===0 && window.PeakPilot.session){
+      const defs = window.PeakPilot.masterCards || [
+        {id:'club', title:'Club (48k/24, target −7.2 LUFS, −0.8 dBTP)', wavKey:'club_master.wav', infoKey:'ClubMaster_24b_48k_INFO.txt', metrics:{labelRow:['LUFS-I','TP','LRA','Thresh'], input:[], output:[]}},
+        {id:'stream', title:'Streaming (44.1k/24, target −9.5 LUFS, −1.0 dBTP)', wavKey:'stream_master.wav', infoKey:'StreamingMaster_24b_44k1_INFO.txt', metrics:{labelRow:['LUFS-I','TP','LRA','Thresh'], input:[], output:[]}},
+        {id:'unlimited', title:'Unlimited Premaster (48k/24, peak −6 dBFS)', wavKey:'premaster_unlimited.wav', infoKey:'UnlimitedPremaster_24b_48k_INFO.txt', metrics:{labelRow:['Peak dBFS'], input:[], output:[]}},
+        {id:'custom', title:'Custom', wavKey:'custom_master.wav', infoKey:'CustomMaster_INFO.txt', metrics:{labelRow:['LUFS-I','TP','LRA','Thresh'], input:[], output:[]}},
+      ];
+      window.renderMasteringResultsInHero(window.PeakPilot.session, defs, {showCustom:false});
+    }
+    for(const id of ['club','stream','unlimited','custom']){
+      const card = MasterCards.get(id);
+      if(!card) continue;
+      const st = m[id];
+      if(!st) continue;
+      card.pill.dataset.state = st.state || 'queued';
+      card.pill.textContent = st.state === 'rendering' ? `Rendering… ${st.pct|0}%`
+                        : st.state === 'finalizing' ? 'Finalizing…'
+                        : st.state === 'done' ? 'Ready'
+                        : st.state === 'error' ? 'Error'
+                        : 'Queued';
+      if(st.state === 'done' && !card.ready){
+        card.btn.removeAttribute('disabled');
+        const base = `/download/${window.PeakPilot.session}/`;
+        card.linkWav.href = base + encodeURIComponent(card.wavKey);
+        card.linkInfo.href = base + encodeURIComponent(card.infoKey);
+        card.linkWav.removeAttribute('aria-disabled');
+        card.linkInfo.removeAttribute('aria-disabled');
+        card.linkWav.removeAttribute('tabindex');
+        card.linkInfo.removeAttribute('tabindex');
+        if(!card.player) card.player = new MasterWavePlayer(card.btn, card.el.querySelector('canvas'), base + encodeURIComponent(card.wavKey));
+        card.ready = true;
+      }
+    }
+    const zip = document.querySelector('#masterCanvases .pp-downloads .pp-dl:not([data-key])') || document.querySelector('#pp-results .pp-downloads .pp-dl:not([data-key])');
+    if(zip && progress.status==='done'){
+      if(zip.getAttribute('aria-disabled')==='true'){
+        const base=`/download/${window.PeakPilot.session}/`;
+        zip.href=base+encodeURIComponent('Masters_AND_INFO.zip');
+        zip.removeAttribute('aria-disabled');
+        zip.removeAttribute('tabindex');
+      }
+    }
+  }
+
+  window.updateMasterProgress = updateMasterProgress;
+
+  class MasterWavePlayer {
     constructor(btn, canvas, url){
       this.btn=btn; this.canvas=canvas; this.url=url;
       this.buffer=null; this.source=null; this.start=0; this.offset=0; this.playing=false;
@@ -180,30 +245,48 @@
     const art=document.createElement('article');
     art.className='pp-card';
     art.id=`card-${cfg.id}`;
-    const h3=document.createElement('h3'); h3.textContent=cfg.title; art.appendChild(h3);
-    const wavewrap=document.createElement('div'); wavewrap.className='pp-wavewrap';
-    const btn=document.createElement('button'); btn.className='pp-play'; btn.type='button'; btn.setAttribute('aria-pressed','false'); btn.setAttribute('aria-label','Play preview'); wavewrap.appendChild(btn);
-    const wave=document.createElement('div'); wave.className='pp-wave wave-neon';
-    const canvas=document.createElement('canvas'); wave.appendChild(canvas); wavewrap.appendChild(wave);
-    art.appendChild(wavewrap);
+    art.innerHTML=`<h3>${cfg.title}</h3>
+      <div class="pp-statepill" data-state="queued">Queued</div>
+      <div class="pp-wavewrap">
+        <button class="pp-play" type="button" aria-pressed="false" aria-label="Play preview" disabled>
+          <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+        </button>
+        <div class="pp-wave"><canvas></canvas></div>
+      </div>`;
     art.appendChild(buildMetricsTable(cfg.metrics));
     const downloads=document.createElement('div'); downloads.className='pp-downloads';
-    const wav=document.createElement('a'); wav.className='pp-dl'; wav.href=`/download/${session}/${encodeURIComponent(cfg.wavKey)}`; wav.innerHTML='<span class="emo">🎼</span> <span>Download WAV</span>';
-    const info=document.createElement('a'); info.className='pp-dl'; info.href=`/download/${session}/${encodeURIComponent(cfg.infoKey)}`; info.innerHTML='<span class="emo">📝</span> <span>Download INFO</span>';
-    downloads.appendChild(wav); downloads.appendChild(info); art.appendChild(downloads);
-    new WaveformPlayer(btn, canvas, cfg.processedUrl);
+    downloads.innerHTML=`<a class="pp-dl" data-key="wav" aria-disabled="true" tabindex="-1"><span class="emo">🎼</span> <span>Download WAV</span></a>
+      <a class="pp-dl" data-key="info" aria-disabled="true" tabindex="-1"><span class="emo">📝</span> <span>Download INFO</span></a>`;
+    art.appendChild(downloads);
+    registerCard(cfg.id, art, cfg.wavKey, cfg.infoKey);
     return art;
   }
 
+  function wireDownloadShield(container){
+    container.addEventListener('click', e=>{
+      const a=e.target.closest('a.pp-dl');
+      if(!a) return;
+      if(a.getAttribute('aria-disabled')==='true'){ e.preventDefault(); e.stopPropagation(); return; }
+      e.stopPropagation();
+      a.setAttribute('download','');
+    });
+  }
+
   window.renderMasteringResultsInHero = function(session, cards, opts={}){
-    const mount=document.getElementById('masterCanvases');
+    const hero=document.getElementById('masterCanvases');
+    const legacy=document.getElementById('pp-results');
+    const mount = hero || legacy;
     if(!mount) return;
+    if(hero && legacy) legacy.innerHTML='';
     mount.innerHTML='';
+    MasterCards.clear();
     const order=['club','stream','unlimited','custom'];
     order.forEach(id=>{ if(id==='custom' && !opts.showCustom) return; const cfg=cards.find(c=>c.id===id); if(cfg) mount.appendChild(buildCard(session,cfg)); });
     const zipRow=document.createElement('div'); zipRow.className='pp-downloads';
-    const zip=document.createElement('a'); zip.className='pp-dl'; zip.href=`/download/${session}/Masters_AND_INFO.zip`; zip.innerHTML='<span class="emo">📦</span> <span>Download Masters + INFO (ZIP)</span>';
+    const zip=document.createElement('a'); zip.className='pp-dl'; zip.setAttribute('aria-disabled','true'); zip.setAttribute('tabindex','-1'); zip.innerHTML='<span class="emo">📦</span> <span>Download Masters + INFO (ZIP)</span>';
     zipRow.appendChild(zip); mount.appendChild(zipRow);
+    wireDownloadShield(mount);
+    if(window.PeakPilot.lastProgress) updateMasterProgress(window.PeakPilot.lastProgress);
   };
 
   window.drawPeakHighlightsOnOriginal = function(canvas, buffer, threshDb){
@@ -221,6 +304,13 @@
       if(db>threshDb) ctx.fillRect(x,0,1,H);
     }
     ctx.restore();
+  };
+
+  const _origUpdateMetrics = window.updateMetrics;
+  window.updateMetrics = function(j){
+    if(typeof _origUpdateMetrics === 'function') _origUpdateMetrics(j);
+    window.PeakPilot.lastProgress = j;
+    updateMasterProgress(j);
   };
 
   window.PeakPilot.getAC = getAC;

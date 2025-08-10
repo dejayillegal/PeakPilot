@@ -154,3 +154,12 @@
 .pp-dl:hover {
   text-decoration: underline;
 }
+
+.pp-statepill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:.75rem; margin:4px 0 8px; border:1px solid var(--pp-border); }
+.pp-statepill[data-state="queued"]     { color:#bcd; }
+.pp-statepill[data-state="rendering"]  { color:#def; }
+.pp-statepill[data-state="finalizing"] { color:#def; }
+.pp-statepill[data-state="done"]       { color:#8ff; border-color:rgba(120,255,220,.35); box-shadow:0 0 12px rgba(120,255,220,.15) inset; }
+.pp-statepill[data-state="error"]      { color:#f99; border-color:rgba(255,120,120,.4); }
+
+.pp-dl[aria-disabled="true"] { pointer-events:none; opacity:.5; }
