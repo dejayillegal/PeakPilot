@@ -4,11 +4,14 @@ from time import sleep
 from app.__init__ import create_app
 
 
-def test_invalid_file_sets_error():
+def test_invalid_file_sets_error(tmp_path, monkeypatch):
+    monkeypatch.setenv('WORK_DIR', str(tmp_path/'work'))
     app = create_app()
     with app.test_client() as c:
-        data = { 'audio': ( io.BytesIO(b'not an audio'), 'bad.txt') }
-        r = c.post('/start', data=data, content_type='multipart/form-data')
+        data = { 'file': ( io.BytesIO(b'not an audio'), 'bad.wav') }
+        u = c.post('/upload', data=data, content_type='multipart/form-data')
+        assert u.status_code == 200
+        r = c.post('/start')
         assert r.status_code == 200
         session = r.get_json()['session']
         saw_error = False
