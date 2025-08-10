@@ -1,5 +1,7 @@
 import os, uuid, threading, json
 from flask import Flask, request, jsonify, render_template, make_response, send_file
+from pathlib import Path
+import subprocess, shutil
 
 from .pipeline import run_pipeline, new_session_dir, write_json_atomic, progress_path, ffprobe_ok
 def create_app():
@@ -44,6 +46,25 @@ def create_app():
         sess_dir = new_session_dir(app.config["UPLOAD_FOLDER"], session)
         src_path = os.path.join(sess_dir, "upload")
         f.save(src_path)
+
+        def make_input_preview(src: Path, dest: Path):
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run([
+                "ffmpeg","-nostdin","-hide_banner","-y",
+                "-i", str(src),
+                "-ar","48000", "-c:a","pcm_s24le",
+                "-metadata", "encoded_by=PeakPilot",
+                "-metadata", "software=PeakPilot",
+                "-metadata", "comment=Mastered by PeakPilot",
+                "-metadata", "IENG=PeakPilot",
+                "-metadata", "ICMT=Mastered by PeakPilot",
+                str(dest)
+            ], check=True)
+
+        try:
+            make_input_preview(Path(src_path), Path(sess_dir) / "input_preview.wav")
+        except Exception:
+            shutil.copyfile(src_path, os.path.join(sess_dir, "input_preview.wav"))
 
         seed = {
             "pct": 0,
@@ -122,6 +143,10 @@ def create_app():
     @app.get("/download/<session>/<key>")
     def download(session, key):
         root = session_root(app.config["UPLOAD_FOLDER"], session)
+        if key == "input_preview.wav":
+            p = root / "input_preview.wav"
+            if p.exists() and p.stat().st_size > 0:
+                return send_file(p, as_attachment=True, download_name=p.name, mimetype="audio/wav")
         try:
             mf = read_manifest(root)
         except Exception:
