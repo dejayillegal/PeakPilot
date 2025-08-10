@@ -22,9 +22,9 @@ def test_start_and_poll_progress(tmp_path, monkeypatch):
         data = { 'file': ( _sine_wav_bytes(), 'test.wav') }
         u = c.post('/upload', data=data, content_type='multipart/form-data')
         assert u.status_code == 200
-        r = c.post('/start')
+        session = u.get_json()['session']
+        r = c.post('/start', json={'session': session})
         assert r.status_code == 200
-        session = r.get_json()['session']
         advanced = False
         for _ in range(12):
             pr = c.get(f'/progress/{session}')

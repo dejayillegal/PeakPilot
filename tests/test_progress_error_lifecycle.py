@@ -11,9 +11,9 @@ def test_invalid_file_sets_error(tmp_path, monkeypatch):
         data = { 'file': ( io.BytesIO(b'not an audio'), 'bad.wav') }
         u = c.post('/upload', data=data, content_type='multipart/form-data')
         assert u.status_code == 200
-        r = c.post('/start')
+        session = u.get_json()['session']
+        r = c.post('/start', json={'session': session})
         assert r.status_code == 200
-        session = r.get_json()['session']
         saw_error = False
         for _ in range(10):
             pr = c.get(f'/progress/{session}')

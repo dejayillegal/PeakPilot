@@ -7,4 +7,4 @@ def test_start_without_audio_returns_400(tmp_path, monkeypatch):
     with app.test_client() as client:
         rv = client.post('/start')
         assert rv.status_code == 400
-        assert 'NO_AUDIO' in rv.get_json().get('error', '')
+        assert 'Missing session' in rv.get_json().get('error', '')
