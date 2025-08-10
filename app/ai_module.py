@@ -6,6 +6,7 @@ import numpy as np
 import soundfile as sf
 from scipy.signal import resample_poly, stft
 from sklearn.linear_model import SGDRegressor
+from sklearn.multioutput import MultiOutputRegressor
 import joblib
 
 def checksum_sha256(path: Path) -> str:
@@ -87,8 +88,9 @@ def analyze_track(path: Path, timeline: Dict[str, Any]):
     if model_file.exists():
         model = joblib.load(model_file)
     else:
-        model = SGDRegressor(max_iter=1, learning_rate="constant", eta0=0.01)
-        model.partial_fit([features], [[0,0,0,0,0,0]])
+        base = SGDRegressor(max_iter=1, learning_rate="constant", eta0=0.01)
+        model = MultiOutputRegressor(base)
+        model.partial_fit([features], np.zeros((1,6)))
         joblib.dump(model, model_file)
     pred = model.predict([features])[0]
     ai_adj = {
@@ -106,7 +108,7 @@ def analyze_track(path: Path, timeline: Dict[str, Any]):
     return features, ai_adj, model, model_file, fingerprint, analysis
 
 
-def update_model(model: SGDRegressor, model_file: Path, fingerprint: str, features: np.ndarray,
+def update_model(model: MultiOutputRegressor, model_file: Path, fingerprint: str, features: np.ndarray,
                  club_targets: Dict[str,float], club_measured: Dict[str,float],
                  str_targets: Dict[str,float], str_measured: Dict[str,float]):
     err = [
