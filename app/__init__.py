@@ -1,9 +1,9 @@
 import os, uuid, threading, json
 from flask import Flask, request, jsonify, render_template, make_response, send_file
 from pathlib import Path
-import subprocess, shutil
+import shutil
 
-from .pipeline import run_pipeline, new_session_dir, write_json_atomic, progress_path, ffprobe_ok
+from .pipeline import run_pipeline, new_session_dir, write_json_atomic, progress_path, ffprobe_ok, make_preview
 def create_app():
     """Create and configure the Flask application.
 
@@ -47,22 +47,8 @@ def create_app():
         src_path = os.path.join(sess_dir, "upload")
         f.save(src_path)
 
-        def make_input_preview(src: Path, dest: Path):
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            subprocess.run([
-                "ffmpeg","-nostdin","-hide_banner","-y",
-                "-i", str(src),
-                "-ar","48000", "-c:a","pcm_s16le",
-                "-metadata", "encoded_by=PeakPilot",
-                "-metadata", "software=PeakPilot",
-                "-metadata", "comment=Mastered by PeakPilot",
-                "-metadata", "IENG=PeakPilot",
-                "-metadata", "ICMT=Mastered by PeakPilot",
-                str(dest)
-            ], check=True)
-
         try:
-            make_input_preview(Path(src_path), Path(sess_dir) / "input_preview.wav")
+            make_preview(Path(src_path), Path(sess_dir) / "input_preview.wav", sr=48000, stereo=True)
         except Exception:
             shutil.copyfile(src_path, os.path.join(sess_dir, "input_preview.wav"))
 

@@ -63,19 +63,29 @@ def write_json_atomic(path: str, obj: Dict[str, Any]):
     os.replace(tmp, path)
 
 
-def _make_preview(src: Path, dst: Path):
-    """Generate a 16-bit preview WAV from ``src`` into ``dst``."""
-    tmp = dst.with_suffix(dst.suffix + ".part")
+def make_preview(src: Path, dst: Path, sr: int | None = None, stereo: bool = True):
+    """Write a browser-friendly 16-bit WAV preview of ``src`` to ``dst``."""
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dst.with_name(dst.stem + ".tmp.wav")
+    cmd = [
+        "ffmpeg", "-nostdin", "-hide_banner", "-y",
+        "-i", str(src),
+        "-c:a", "pcm_s16le",
+        "-f", "wav",
+    ]
+    if sr:
+        cmd += ["-ar", str(sr)]
+    if stereo:
+        cmd += ["-ac", "2"]
+    cmd += [str(tmp)]
     try:
-        subprocess.run([
-            "ffmpeg", "-nostdin", "-hide_banner", "-y", "-i", str(src),
-            "-c:a", "pcm_s16le",
-            str(tmp)
-        ], check=True)
+        subprocess.run(cmd, check=True)
         os.replace(tmp, dst)
     except Exception:
         try:
             import shutil
+            if tmp.exists():
+                tmp.unlink(missing_ok=True)
             shutil.copyfile(src, dst)
         except Exception:
             pass
@@ -203,19 +213,21 @@ def ebur128_timeline(path: str) -> Dict[str, list]:
     return {"sec": sec, "short_term": st, "tp_flags": tp}
 
 
-def _loudnorm_two_pass_py(src, dst, I, TP, LRA=11, sr=None, bits=24, smart_limiter=False):
+def _loudnorm_two_pass_py(src, dst, I, TP, LRA=11, sr=None, bits=24, smart_limiter=False, stereo=True):
     data, _ = _read_mono(src)
     target = 10 ** (I / 20)
     rms = np.sqrt(np.mean(data ** 2)) + 1e-9
     gain = target / rms
     out = np.clip(data * gain, -1.0, 1.0)
+    if stereo:
+        out = np.column_stack((out, out))
     sr = sr or 48000
     subtype = "PCM_24" if bits == 24 else "PCM_16"
     sf.write(dst, out, sr, subtype=subtype)
     return dst
 
 
-def loudnorm_two_pass(src, dst, I, TP, LRA=11, sr=None, bits=24, smart_limiter=False):
+def loudnorm_two_pass(src, dst, I, TP, LRA=11, sr=None, bits=24, smart_limiter=False, stereo=True):
     """Two-pass loudness normalization using ffmpeg with safe resampling.
 
     Falls back to a simple Python implementation when ffmpeg is unavailable."""
@@ -254,6 +266,8 @@ def loudnorm_two_pass(src, dst, I, TP, LRA=11, sr=None, bits=24, smart_limiter=F
         ]
         if sr != 44100:
             cmd2 += ["-ar", str(sr)]
+        if stereo:
+            cmd2 += ["-ac", "2"]
         cmd2 += [
             "-c:a", "pcm_s24le" if bits == 24 else "pcm_s16le",
             "-metadata", "encoded_by=PeakPilot",
@@ -271,10 +285,10 @@ def loudnorm_two_pass(src, dst, I, TP, LRA=11, sr=None, bits=24, smart_limiter=F
         return dst
     except Exception:
         # fallback
-        return _loudnorm_two_pass_py(src, dst, I, TP, LRA=LRA, sr=sr, bits=bits, smart_limiter=smart_limiter)
+        return _loudnorm_two_pass_py(src, dst, I, TP, LRA=LRA, sr=sr, bits=bits, smart_limiter=smart_limiter, stereo=stereo)
 
 
-def normalize_peak_to(src, dst, peak_dbfs=-6.0, sr=48000, bits=24):
+def normalize_peak_to(src, dst, peak_dbfs=-6.0, sr=48000, bits=24, stereo=True):
     in_peak = measure_peak_dbfs(src)
     gain_db = peak_dbfs - in_peak
     part = dst + ".part"
@@ -283,6 +297,10 @@ def normalize_peak_to(src, dst, peak_dbfs=-6.0, sr=48000, bits=24):
         "-i", src,
         "-filter:a", f"volume={gain_db:.2f}dB",
         "-ar", str(sr),
+    ]
+    if stereo:
+        cmd += ["-ac", "2"]
+    cmd += [
         "-c:a", "pcm_s24le" if bits == 24 else "pcm_s16le",
         "-metadata", "encoded_by=PeakPilot",
         "-metadata", "software=PeakPilot",
@@ -305,6 +323,8 @@ def normalize_peak_to(src, dst, peak_dbfs=-6.0, sr=48000, bits=24):
         target = 10 ** (peak_dbfs / 20.0)
         gain = target / peak
         data = data * gain
+        if stereo and data.ndim == 1:
+            data = np.column_stack((data, data))
         subtype = 'PCM_24' if bits == 24 else 'PCM_16'
         sf.write(dst, data, sr if sr else sr_in, subtype=subtype)
         return dst
@@ -394,7 +414,7 @@ def run_pipeline(session: str, sess_dir: str, src_path: str, params: Dict[str, A
         loudnorm_two_pass(src_path, club_wav, I=-7.2 + ai_adj["club"]["dI"], TP=-1.0 + ai_adj["club"]["dTP"], LRA=11, sr=48000, bits=24)
         update_progress(sess_dir, masters={"club": {"state": "finalizing", "pct": 99, "message": "Finalizing..."}})
         ok_club, _, _ = post_verify(club_wav, -7.2 + ai_adj["club"]["dI"], -1.0 + ai_adj["club"]["dTP"])
-        _make_preview(Path(sess_dir) / "club_master.wav", Path(sess_dir) / "club_master_preview.wav")
+        make_preview(Path(sess_dir) / "club_master.wav", Path(sess_dir) / "club_master_preview.wav", sr=48000, stereo=True)
         club_metrics = measure_loudnorm_json(club_wav)
         info_out = ffprobe_info(club_wav)
         sha = checksum_sha256(club_wav)
@@ -427,7 +447,7 @@ def run_pipeline(session: str, sess_dir: str, src_path: str, params: Dict[str, A
         loudnorm_two_pass(src_path, streaming_wav, I=-9.5 + ai_adj["streaming"]["dI"], TP=-1.5 + ai_adj["streaming"]["dTP"], LRA=11, sr=44100, bits=24)
         update_progress(sess_dir, masters={"stream": {"state": "finalizing", "pct": 99, "message": "Finalizing..."}})
         ok_stream, _, _ = post_verify(streaming_wav, -9.5 + ai_adj["streaming"]["dI"], -1.5 + ai_adj["streaming"]["dTP"])
-        _make_preview(Path(sess_dir) / "stream_master.wav", Path(sess_dir) / "stream_master_preview.wav")
+        make_preview(Path(sess_dir) / "stream_master.wav", Path(sess_dir) / "stream_master_preview.wav", sr=44100, stereo=True)
         str_metrics = measure_loudnorm_json(streaming_wav)
         info_out = ffprobe_info(streaming_wav)
         sha = checksum_sha256(streaming_wav)
@@ -460,7 +480,7 @@ def run_pipeline(session: str, sess_dir: str, src_path: str, params: Dict[str, A
         normalize_peak_to(src_path, premaster_wav, peak_dbfs=-6.0, sr=48000, bits=24)
         update_progress(sess_dir, masters={"unlimited": {"state": "finalizing", "pct": 99, "message": "Finalizing..."}})
         peak_out = measure_peak_dbfs(premaster_wav)
-        _make_preview(Path(sess_dir) / "premaster_unlimited.wav", Path(sess_dir) / "premaster_unlimited_preview.wav")
+        make_preview(Path(sess_dir) / "premaster_unlimited.wav", Path(sess_dir) / "premaster_unlimited_preview.wav", sr=48000, stereo=True)
         info_out = ffprobe_info(premaster_wav)
         sha = checksum_sha256(premaster_wav)
         write_json_atomic(os.path.join(sess_dir, "premaster_unlimited_info.json"), info_out)
@@ -551,6 +571,7 @@ __all__ = [
     "ebur128_timeline",
     "loudnorm_two_pass",
     "normalize_peak_to",
+    "make_preview",
     "run_pipeline",
 ]
 

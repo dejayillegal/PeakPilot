@@ -1,6 +1,5 @@
 from flask import Blueprint, current_app, request, abort, Response
 from pathlib import Path
-import mimetypes
 import os
 
 from app.util_fs import session_root
@@ -31,11 +30,10 @@ def stream(session, key):
     p = root / key
     if not p.exists() or p.is_dir():
         abort(404)
-    mimetype = mimetypes.guess_type(p.name)[0] or "application/octet-stream"
     code, chunk, start, end, size = _open_range(p, request.headers.get("Range"))
     headers = {
         "Accept-Ranges": "bytes",
-        "Content-Type": mimetype,
+        "Content-Type": "audio/wav",
         "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
     }
     if code == 206:

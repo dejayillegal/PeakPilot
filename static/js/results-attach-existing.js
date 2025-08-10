@@ -143,9 +143,8 @@
       this._lastHead=x;
     }
     async _ensureAudio(){
-      // Use inline stream preview if available
-      const streamUrl = this.url.replace("/download/","/stream/").replace(/\.wav$/,"_preview.wav");
-      const tryUrls = [streamUrl, this.url.replace("/download/","/stream/"), this.url];
+      const dlUrl = this.url.replace("/stream/","/download/").replace(/_preview\.wav$/,".wav");
+      const tryUrls = [this.url, dlUrl];
       for(const u of tryUrls){
         try{
           const test = await fetch(u, { method:"GET", cache:"no-store" });
@@ -158,7 +157,6 @@
           return;
         }catch{}
       }
-      // fallback: leave disabled
       this.btn.setAttribute("disabled","disabled");
     }
     _tick(){
@@ -205,26 +203,27 @@
   }
 
   // ---------- AUTO-ATTACH ----------
+  function previewFromDownload(url){
+    return url.replace("/download/","/stream/").replace(/([^/]+)\.wav$/,"$1_preview.wav");
+  }
+
   function attachExisting(){
     const session = window.PeakPilot?.session || (location.pathname.split('/').find(x=>x.length>=6) || "");
-    // Original preview
     const playBtn = document.getElementById('play');
     const wave    = document.getElementById('loudCanvas');
     if (session && playBtn && wave) {
       const orig = `/stream/${session}/input_preview.wav`;
-      fetch(orig, {cache:"no-store"}).then(r=>{
-        if(r.ok){ new CardPlayer({ card:null, button:playBtn, waveCanvas:wave, specCanvas:null, url: `/download/${session}/input_preview.wav` }); }
-      });
+      new CardPlayer({ card:null, button:playBtn, waveCanvas:wave, specCanvas:null, url: orig });
     }
-    // Master cards
     document.querySelectorAll('.pp-card').forEach(card=>{
       const btn = card.querySelector('.pp-play');
       const wave = card.querySelector('.pp-wave canvas');
       const spec = card.querySelector('.pp-spec canvas');
       const wav = card.querySelector('.pp-downloads [data-key="wav"]');
       if(!btn || !wave || !wav) return;
-      const url = wav.getAttribute('href'); if(!url) return;
-      new CardPlayer({ card, button: btn, waveCanvas: wave, specCanvas: spec, url });
+      const dlUrl = wav.getAttribute('href'); if(!dlUrl) return;
+      const pvUrl = previewFromDownload(dlUrl);
+      new CardPlayer({ card, button: btn, waveCanvas: wave, specCanvas: spec, url: pvUrl });
     });
 
     // Make only one downloadable element actually download (native)

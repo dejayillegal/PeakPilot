@@ -67,7 +67,7 @@
     if(!host) return;
     const mount = document.createElement("div");
     host.innerHTML=""; host.appendChild(mount);
-    const url = `/download/${session}/input_preview.wav`;
+    const url = `/stream/${session}/input_preview.wav`;
     new SimpleWave({ mount, url });
   };
 })();
