@@ -27,7 +27,8 @@ def create_app():
     static_dir = root_dir / "static"
 
     app = Flask(__name__, template_folder=str(template_dir), static_folder=str(static_dir))
-    app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024
+    # allow uploads up to 512 MB
+    app.config["MAX_CONTENT_LENGTH"] = 512 * 1024 * 1024
     pref = os.environ.get("UPLOAD_ROOT", "/mnt/data/sessions")
     app.config["UPLOAD_ROOT"] = _resolve_writable_dir(pref)
     app.config["JSON_SORT_KEYS"] = False

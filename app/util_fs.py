@@ -6,7 +6,10 @@ import uuid
 import tempfile
 from typing import Dict, Tuple
 
-ALLOWED_EXTS = {'.wav', '.aiff', '.aif', '.flac', '.mp3'}
+# Supported audio extensions for uploads
+ALLOWED_EXTS = {
+    '.wav', '.mp3', '.flac', '.aiff', '.aif', '.aac', '.m4a', '.ogg', '.oga', '.opus'
+}
 
 
 def generate_session() -> str:

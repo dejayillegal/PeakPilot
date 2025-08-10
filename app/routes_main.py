@@ -7,7 +7,6 @@ from flask import Blueprint, current_app, jsonify, request, send_file, render_te
 from .util_fs import (
     ensure_session,
     progress_path,
-    write_progress,
     safe_join,
     load_manifest,
     sha256_file,
@@ -35,19 +34,8 @@ def start():
     if not input_path:
         return jsonify({'ok': False, 'error': 'no input file'}), 400
 
-    progress = {
-        'status': 'starting',
-        'pct': 0,
-        'message': 'Starting…',
-        'metrics': {
-            'club': {'input': {}, 'output': {}},
-            'stream': {'input': {}, 'output': {}},
-            'unlimited': {'input': {}, 'output': {}},
-        },
-    }
-    write_progress(sess_dir, progress)
-
-    t = threading.Thread(target=run_mastering, args=(sess_dir, input_path), daemon=True)
+    # run mastering in background thread
+    t = threading.Thread(target=run_mastering, args=(sess_dir,), daemon=True)
     t.start()
     return jsonify({'ok': True})
 

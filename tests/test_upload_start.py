@@ -25,6 +25,15 @@ def test_start_creates_outputs_and_manifest(client, sine_file):
             break
         time.sleep(0.5)
     sess_dir = os.path.join(client.application.config['UPLOAD_ROOT'], session)
-    expected = ['club_master.wav', 'club_info.json', 'stream_master.wav', 'stream_info.json', 'premaster_unlimited.wav', 'premaster_unlimited_info.json', 'manifest.json']
+    expected = [
+        'club_master.wav',
+        'club_info.json',
+        'stream_master.wav',
+        'stream_info.json',
+        'premaster_unlimited.wav',
+        'premaster_unlimited_info.json',
+        'input_preview.wav',
+        'manifest.json',
+    ]
     for fname in expected:
         assert os.path.exists(os.path.join(sess_dir, fname))
