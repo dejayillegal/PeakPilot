@@ -14,8 +14,11 @@
 
   <main class="pp-main">
     <form id="upload-form">
-      <input id="file-input" type="file" name="audio" accept="audio/*" required />
-      <button id="analyze-btn" type="submit">Analyze → Master</button>
+      <div id="drop-area" class="drop-area">
+        <span id="drop-text">Drag & drop audio here or click to browse</span>
+        <input id="file-input" type="file" name="audio" accept="audio/*" required hidden />
+      </div>
+      <button id="analyze-btn" type="submit" disabled>Analyze → Master</button>
     </form>
 
     <section id="original-section" class="track-section">
