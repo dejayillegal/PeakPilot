@@ -1,131 +1,91 @@
-import os
-import threading
-from pathlib import Path
-from flask import (
-    Flask,
-    request,
-    render_template,
-    jsonify,
-    url_for,
-    send_from_directory,
-    current_app,
-)
-from werkzeug.utils import secure_filename
+import os, uuid, threading, json
+from flask import Flask, request, jsonify, send_from_directory, render_template, make_response
 
-from .pipeline import (
-    ALLOWED_EXTS,
-    PRESETS,
-    allowed_file,
-    new_session_dir,
-    progress_path,
-    write_json,
-    read_json,
-    base_progress,
-    update_progress,
-    run_pipeline,
-    ensure_ffmpeg,
-    init_app,
-)
+from .pipeline import run_pipeline, new_session_dir, write_json_atomic, progress_path, ffprobe_ok
 
 
 def create_app():
-    base_dir = Path(__file__).resolve().parent.parent
-    app = Flask(
-        __name__,
-        static_folder=str(base_dir / "static"),
-        template_folder=str(base_dir / "templates"),
-    )
-    app.config["MAX_CONTENT_LENGTH"] = 512 * 1024 * 1024  # 512 MB
-    app.config["UPLOAD_FOLDER"] = os.environ.get("UPLOAD_FOLDER", "/tmp/peakpilot")
-    Path(app.config["UPLOAD_FOLDER"]).mkdir(parents=True, exist_ok=True)
+    app = Flask(__name__, template_folder="templates", static_folder="static")
+    app.config["UPLOAD_FOLDER"] = "/tmp/peakpilot"
+    app.config["MAX_CONTENT_LENGTH"] = 512 * 1024 * 1024
+    os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
 
-    init_app(app)
-
-    @app.route("/", methods=["GET"])
+    @app.get("/")
     def index():
-        return render_template("index.html", presets=list(PRESETS.keys()))
+        return render_template("index.html")
 
-    @app.route("/start", methods=["POST"])
+    @app.get("/healthz")
+    def healthz():
+        return jsonify({"status": "ok", "ffmpeg": ffprobe_ok("ffmpeg"), "ffprobe": ffprobe_ok("ffprobe")})
+
+    @app.post("/start")
     def start():
         f = request.files.get("audio")
-        if not f or f.filename == "":
-            return jsonify({"error": "No file"}), 400
-        if not allowed_file(f.filename):
-            return jsonify({"error": "Unsupported type"}), 400
+        if not f:
+            return jsonify({"error": "No audio file provided (form field must be 'audio')."}), 400
 
-        session, d = new_session_dir()
-        src = d / secure_filename(f.filename)
-        f.save(str(src))
+        session = uuid.uuid4().hex[:12]
+        sess_dir = new_session_dir(app.config["UPLOAD_FOLDER"], session)
+        src_path = os.path.join(sess_dir, "upload")
+        f.save(src_path)
 
-        stems, gains = {}, {}
-        for role in ["vocals", "drums", "bass", "other"]:
-            sf = request.files.get(f"stems[{role}]")
-            if sf and sf.filename:
-                p = d / secure_filename(sf.filename)
-                sf.save(str(p))
-                stems[role] = p
-                gains[role] = float(request.form.get(f"gains[{role}]", "1.0"))
-
-        params = {
-            "preset": request.form.get("preset", "club"),
-            "bits": int(request.form.get("bits", PRESETS.get(request.form.get("preset", "club"), PRESETS["club"])["bits"])),
-            "dither": request.form.get("dither") or None,
-            "trim": request.form.get("trim", "true").lower() == "true",
-            "pad_ms": int(request.form.get("pad_ms", "100")),
-            "smart_limiter": request.form.get("smart_limiter", "false").lower() == "true",
-            "do_trim_pad": request.form.get("do_trim_pad", "true").lower() == "true",
-        }
-
-        write_json(progress_path(session), base_progress())
-        update_progress(
-            session,
-            1,
-            "queued",
-            "Queued",
-            patch={
-                "preset": params["preset"],
-                "options": {
-                    "trim": params["trim"],
-                    "pad_ms": params["pad_ms"],
-                    "smart_limiter": params["smart_limiter"],
-                    "bits": params["bits"],
-                    "dither": params["dither"],
+        seed = {
+            "percent": 1,
+            "phase": "starting",
+            "message": "Starting…",
+            "done": False,
+            "error": None,
+            "downloads": {"club": None, "streaming": None, "premaster": None, "custom": None, "zip": None, "session_json": None},
+            "metrics": {
+                "club": {"input": {}, "output": {}},
+                "streaming": {"input": {}, "output": {}},
+                "premaster": {"input": {}, "output": {}},
+                "custom": {"input": {}, "output": {}},
+                "advisor": {
+                    "recommended_preset": "",
+                    "input_I": None,
+                    "input_TP": None,
+                    "input_LRA": None,
+                    "analysis": {},
+                    "ai_adjustments": {},
                 },
             },
-        )
+            "timeline": {"sec": [], "short_term": [], "tp_flags": []},
+        }
+        write_json_atomic(progress_path(sess_dir), seed)
 
-        t = threading.Thread(
-            target=run_pipeline,
-            args=(session, src, params, stems if stems else None, gains if gains else None),
-            daemon=True,
-        )
+        params = request.form.to_dict(flat=True)
+        stems = {}
+        gains = {}
+        t = threading.Thread(target=run_pipeline, args=(session, sess_dir, src_path, params, stems, gains), daemon=True)
         t.start()
 
-        return jsonify({"session": session, "progress_url": url_for("progress", session=session, _external=True)})
+        return jsonify({"session": session, "progress_url": f"/progress/{session}"})
 
-    @app.route("/progress/<session>", methods=["GET"])
-    def progress(session: str):
-        resp = jsonify(read_json(progress_path(session), base_progress()))
-        resp.headers["Cache-Control"] = "no-store"
+    @app.get("/progress/<session>")
+    def progress(session):
+        p = progress_path(os.path.join(app.config["UPLOAD_FOLDER"], session))
+        if not os.path.exists(p):
+            resp = make_response(json.dumps({"percent": 1, "phase": "starting", "message": "Starting…", "done": False, "error": None}), 200)
+        else:
+            with open(p, "r", encoding="utf-8") as fh:
+                resp = make_response(fh.read(), 200)
+        resp.headers["Content-Type"] = "application/json"
+        resp.headers["Cache-Control"] = "no-store, max-age=0"
         return resp
 
-    @app.route("/download/<session>/<path:file>", methods=["GET"])
-    def download_file(session: str, file: str):
-        d = Path(current_app.config["UPLOAD_FOLDER"]) / session
-        if not d.exists():
-            return "Not found", 404
-        return send_from_directory(str(d), file, as_attachment=True)
-
-    @app.route("/healthz", methods=["GET"])
-    def healthz():
-        ffmpeg_ok, ffprobe_ok = ensure_ffmpeg()
-        return jsonify({"status": "ok", "ffmpeg": ffmpeg_ok, "ffprobe": ffprobe_ok})
+    @app.get("/download/<session>/<path:filename>")
+    def download(session, filename):
+        sess_dir = os.path.join(app.config["UPLOAD_FOLDER"], session)
+        safe = os.path.abspath(sess_dir)
+        if not os.path.abspath(os.path.join(sess_dir, filename)).startswith(safe):
+            return jsonify({"error": "Invalid path"}), 400
+        return send_from_directory(sess_dir, filename, as_attachment=True)
 
     return app
 
 
-# instantiate for convenience
 app = create_app()
 
-__all__ = ["create_app", "app", "allowed_file", "PRESETS"]
+__all__ = ["create_app", "app"]
 
