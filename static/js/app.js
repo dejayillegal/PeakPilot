@@ -1,405 +1,73 @@
-// DOM refs
-const pick = document.getElementById('pick');
+let session = null;
 const fileInput = document.getElementById('file');
-const drop = document.getElementById('drop');
-
-const presetSel = document.getElementById('preset');
-const bitsSel = document.getElementById('bits');
-const ditherSel = document.getElementById('dither');
-const trimChk = document.getElementById('trim');
-const padInput = document.getElementById('pad_ms');
-const smartChk = document.getElementById('smart_limiter');
-
 const analyzeBtn = document.getElementById('analyze');
-const modal = document.getElementById('modal');
-function showAnalyzingModal(isOpen){
-  if (!modal) return;
-  if (isOpen) {
-    modal.classList.remove('hidden');
-  } else {
-    modal.classList.add('hidden');
-  }
+const progBar = document.querySelector('.pp-fileprog .bar');
+const fileInfo = document.querySelector('.pp-fileinfo');
+
+function bytes(n){
+  if (n > 1e6) return (n/1e6).toFixed(1)+' MB';
+  if (n > 1e3) return (n/1e3).toFixed(1)+' kB';
+  return n + ' B';
 }
 
-const preview = document.getElementById('preview');
-const playBtn = document.getElementById('play');
-const curEl = document.getElementById('cur');
-const durEl = document.getElementById('dur');
-const previewSource = document.getElementById('previewSource');
-const abOrig = document.getElementById('abOriginal');
-const abProc = document.getElementById('abProcessed');
-
-const result = document.getElementById('result');
-const dlClub = document.getElementById('dlClub');
-const dlStreaming = document.getElementById('dlStreaming');
-const dlPremaster = document.getElementById('dlPremaster');
-const dlCustom = document.getElementById('dlCustom');
-const dlZip = document.getElementById('dlZip');
-const dlSession = document.getElementById('dlSession');
-
-const pvClub = document.getElementById('pvClub');
-const pvStreaming = document.getElementById('pvStreaming');
-const pvPremaster = document.getElementById('pvPremaster');
-const pvCustom = document.getElementById('pvCustom');
-
-const metricsPanel = document.getElementById('metrics');
-const customMetrics = document.getElementById('customMetrics');
-const loudCanvas = document.getElementById('loudCanvas');
-const loudCtx = loudCanvas.getContext('2d');
-
-let polling = null;
-let wave = null;
-let lastMetrics = null;
-
-let currentLabel = 'Original';
-let currentGain = 1.0;   // for A/B gain-match
-let selectedFile = null;
-let selectedBlobUrl = null;
-
-// --- utils ---
-function t(sec){
-  if(!isFinite(sec)) return "0:00";
-  const m = Math.floor(sec/60), s = Math.floor(sec%60);
-  return `${m}:${s.toString().padStart(2,'0')}`;
-}
-// progress display handled by setAnalyzeState / setAnalyzeProgress
-function setIf(id, v){ const el = document.getElementById(id); if(!el) return; el.textContent = (v==null? '—' : (typeof v === 'number' ? v.toFixed(2) : v)); }
-
-function makeWaveform(){
-  if (wave) { wave.destroy(); wave = null; }
-  const width = document.getElementById('waveWrap').clientWidth;
-  loudCanvas.width = width;
-  wave = WaveSurfer.create({
-    container: '#waveform',
-    height: 120,
-    waveColor: 'rgba(31,241,233,0.35)',
-    progressColor: 'rgba(108,248,255,0.9)',
-    cursorColor: '#fff',
-    barWidth: 2, barRadius: 1, barGap: 1,
-    normalize: true, responsive: true,
-  });
-  wave.on('ready', ()=>{ durEl.textContent = t(wave.getDuration()); wave.setVolume(currentGain); drawTimelineOverlay(lastMetrics?.timeline || null); });
-  wave.on('audioprocess', ()=>{ curEl.textContent = t(wave.getCurrentTime()); });
-  wave.on('seek', ()=>{ curEl.textContent = t(wave.getCurrentTime()); });
-  wave.on('finish', ()=>{ playBtn.textContent = 'Play'; });
-}
-
-function loadIntoWave(srcUrl, label, matchGain=null){
-  currentLabel = label;
-  if (matchGain != null) currentGain = matchGain;
-  preview.classList.remove('hidden');
-  previewSource.textContent = 'Preview: ' + label;
-  makeWaveform();
-  wave.load(srcUrl);
-  playBtn.textContent = 'Play';
-}
-
-function gainForI(I, targetRef){
-  if (I == null || !isFinite(I)) return 1.0;
-  const deltaDb = targetRef - I;             // positive means boost, negative means cut
-  const lin = Math.pow(10, deltaDb/20);
-  return Math.max(0.1, Math.min(2.5, lin));  // clamp sane range
-}
-
-function updateMetrics(j){
-  lastMetrics = j;
-  if (j.timeline) drawTimelineOverlay(j.timeline);
-  if (!j.metrics) return;
-
-  metricsPanel.classList.remove('hidden');
-  // Club
-  const ci = j.metrics?.club?.input || {}, co = j.metrics?.club?.output || {};
-  setIf('club_in_I', ci.I); setIf('club_in_TP', ci.TP); setIf('club_in_LRA', ci.LRA); setIf('club_in_TH', ci.threshold);
-  setIf('club_out_I', co.I); setIf('club_out_TP', co.TP); setIf('club_out_LRA', co.LRA); setIf('club_out_TH', co.threshold);
-  // Streaming
-  const si = j.metrics?.streaming?.input || {}, so = j.metrics?.streaming?.output || {};
-  setIf('str_in_I', si.I); setIf('str_in_TP', si.TP); setIf('str_in_LRA', si.LRA); setIf('str_in_TH', si.threshold);
-  setIf('str_out_I', so.I); setIf('str_out_TP', so.TP); setIf('str_out_LRA', so.LRA); setIf('str_out_TH', so.threshold);
-  // Premaster
-  const pi = j.metrics?.premaster?.input || {}, po = j.metrics?.premaster?.output || {};
-  setIf('pre_in_P', pi.peak_dbfs); setIf('pre_out_P', po.peak_dbfs);
-  // Custom
-  if (j.metrics?.custom){
-    const ci2 = j.metrics.custom.input || {}, co2 = j.metrics.custom.output || {};
-    setIf('cus_in_I', ci2.I); setIf('cus_in_TP', ci2.TP); setIf('cus_in_LRA', ci2.LRA); setIf('cus_in_TH', ci2.threshold);
-    setIf('cus_out_I', co2.I); setIf('cus_out_TP', co2.TP); setIf('cus_out_LRA', co2.LRA); setIf('cus_out_TH', co2.threshold);
-    customMetrics.classList.remove('hidden');
-  } else {
-    customMetrics.classList.add('hidden');
-  }
-}
-
-function drawTimelineOverlay(tl){
-  const ctx = loudCtx;
-  const canvas = loudCanvas;
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-  if (!tl || !tl.sec || tl.sec.length === 0) return;
-
-  const W = canvas.width, H = canvas.height;
-  const minL = Math.min(...tl.short_term, -30), maxL = Math.max(...tl.short_term, 0);
-  const n = tl.sec.length;
-  const step = Math.max(1, Math.floor(n / W)); // one px per sample approx
-
-  for (let x=0, i=0; i<n; i+=step, x++){
-    const lufs = tl.short_term[i];
-    const y = H - ((lufs - minL) / (maxL - minL)) * H;
-    ctx.fillStyle = 'rgba(31,241,233,0.35)';
-    ctx.fillRect(x, y, 1, H - y);
-    if (tl.tp_flags[i]) {
-      ctx.fillStyle = 'rgba(255,80,80,0.9)';
-      ctx.fillRect(x, 0, 1, 6);
-    }
-  }
-}
-
-async function startJob(file, blobUrl){
-  // send with options
+fileInput?.addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const xhr = new XMLHttpRequest();
   const fd = new FormData();
-  fd.append('audio', file);
-  fd.append('preset', presetSel.value);
-  fd.append('bits', bitsSel.value);
-  fd.append('dither', ditherSel.value);
-  fd.append('trim', trimChk.checked ? 'true' : 'false');
-  fd.append('pad_ms', padInput.value || '100');
-  fd.append('smart_limiter', smartChk.checked ? 'true' : 'false');
-  fd.append('do_trim_pad', 'true');
+  if (session) fd.append('session', session);
+  fd.append('reset','1');
+  fd.append('file', file);
+  xhr.upload.onprogress = ev => {
+    if (ev.lengthComputable) {
+      progBar.style.width = (ev.loaded/ev.total*100).toFixed(1)+'%';
+    }
+  };
+  xhr.onload = () => {
+    const res = JSON.parse(xhr.responseText || '{}');
+    if (res.ok){
+      session = res.session;
+      fileInfo.textContent = `${res.filename} • ${bytes(res.size)}`;
+      fileInfo.dataset.state = 'uploaded';
+      analyzeBtn.disabled = false;
+    }
+  };
+  xhr.open('POST','/upload');
+  xhr.send(fd);
+});
 
-  const r = await fetch('/start', { method:'POST', body: fd });
-  if (!r.ok) { alert('Failed to start: ' + (await r.text())); return; }
-  const { session, progress_url } = await r.json();
-  poll(progress_url, blobUrl);
+function showAnalyzingModal(open){
+  const modal = document.getElementById('modal');
+  if (!modal) return;
+  modal.classList.toggle('hidden', !open);
 }
 
-function setABGains(metrics){
-  // Use advisor.input_I as reference; otherwise -14 LUFS
-  const refI = metrics?.metrics?.advisor?.input_I ?? -14.0;
-
-  const srcI = metrics?.metrics?.advisor?.input_I; // original
-  const clubI = metrics?.metrics?.club?.output?.I;
-  const strI  = metrics?.metrics?.streaming?.output?.I;
-  const preI  = metrics?.metrics?.premaster?.output?.I; // may be undefined; ignore
-  const cusI  = metrics?.metrics?.custom?.output?.I;
-
-  return {
-    original: gainForI(srcI, refI),
-    club:     gainForI(clubI, refI),
-    streaming:gainForI(strI, refI),
-    premaster:gainForI(preI, refI),
-    custom:   gainForI(cusI, refI)
-  };
+function setAnalyzeProgress(p){
+  document.querySelector('.pp-progress .bar').style.width = p+'%';
 }
 
-async function poll(url, originalBlobUrl){
-  clearInterval(polling);
-  polling = setInterval(async ()=>{
-    try{
-      const r = await fetch(url, { cache: 'no-store' });
-      const j = await r.json();
-
-        setAnalyzeProgress(j.percent);
-        if (j.phase || j.message) setAnalyzeState(j.phase || j.message);
-        updateMetrics(j);
-
-        if (j.done) {
-          clearInterval(polling);
-          showAnalyzingModal(false);
-          result.classList.remove('hidden');
-        dlClub.href = j.downloads.club;
-        dlStreaming.href = j.downloads.streaming;
-        dlPremaster.href = j.downloads.premaster;
-        dlZip.href = j.downloads.zip;
-        dlSession.href = j.downloads.session_json;
-
-        if (j.downloads.custom){
-          dlCustom.href = j.downloads.custom;
-          dlCustom.style.display = '';
-          pvCustom.style.display = '';
-        }
-
-        const gains = setABGains(j);
-        loadIntoWave(j.downloads.club, 'Club', gains.club);
-        pvClub.onclick = ()=> loadIntoWave(j.downloads.club, 'Club', gains.club);
-        pvStreaming.onclick = ()=> loadIntoWave(j.downloads.streaming, 'Streaming', gains.streaming);
-        pvPremaster.onclick = ()=> loadIntoWave(j.downloads.premaster, 'Unlimited Premaster', gains.premaster || 1.0);
-        if (j.downloads.custom) pvCustom.onclick = ()=> loadIntoWave(j.downloads.custom, 'Custom', gains.custom);
-
-        abOrig.onclick = ()=> loadIntoWave(originalBlobUrl, 'Original', gains.original || 1.0);
-        abProc.onclick = ()=> loadIntoWave(j.downloads.club || j.downloads.streaming, 'Processed', (gains.club || gains.streaming || 1.0));
-      }
-    }catch(e){ /* ignore transient errors */ }
-  }, 1000);
+function setAnalyzeState(msg){
+  const el = document.getElementById('pp-state');
+  if (el) el.textContent = msg;
 }
 
-// UI wiring
-pick?.addEventListener('click', ()=> fileInput.click());
-drop?.addEventListener('click', ()=> fileInput.click());
-  fileInput?.addEventListener('change', ()=>{ const f=fileInput.files[0]; if(f){ selectedFile=f; selectedBlobUrl=URL.createObjectURL(f); loadIntoWave(selectedBlobUrl,'Original',1.0); analyzeBtn.disabled=false; }});
-['dragenter','dragover'].forEach(ev => drop.addEventListener(ev, e=>{ e.preventDefault(); drop.classList.add('drag'); }));
-['dragleave','drop'].forEach(ev => drop.addEventListener(ev, e=>{ e.preventDefault(); drop.classList.remove('drag'); }));
-  drop.addEventListener('drop', e=>{ e.preventDefault(); const f=e.dataTransfer.files[0]; if(f){ selectedFile=f; selectedBlobUrl=URL.createObjectURL(f); loadIntoWave(selectedBlobUrl,'Original',1.0); analyzeBtn.disabled=false; }});
-  analyzeBtn?.addEventListener('click', ()=>{ if(!selectedFile) return; showAnalyzingModal(true); setAnalyzeProgress(0); setAnalyzeState('Starting…'); startJob(selectedFile, selectedBlobUrl); });
+async function poll(){
+  const r = await fetch(`/progress/${session}`, {cache:'no-store'});
+  const j = await r.json();
+  setAnalyzeProgress(j.pct || 0);
+  if (j.status === 'analyzing') setAnalyzeState('Measuring loudness…');
+  if (j.status === 'mastering') setAnalyzeState('Rendering masters…');
+  if (j.status === 'finalizing') setAnalyzeState('Computing checksums…');
+  if (j.status === 'done'){ showAnalyzingModal(false); clearInterval(timer); }
+}
+let timer;
 
-// Player
-playBtn?.addEventListener('click', ()=>{ if(!wave) return; if (wave.isPlaying()){ wave.pause(); playBtn.textContent='Play'; } else { wave.play(); playBtn.textContent='Pause'; }});
-window.addEventListener('resize', ()=> drawTimelineOverlay(lastMetrics?.timeline || null));
+analyzeBtn?.addEventListener('click', async () => {
+  if (!session) return;
+  analyzeBtn.disabled = true;
+  showAnalyzingModal(true);
+  setAnalyzeState('Analyzing…');
+  await fetch('/start', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({session})});
+  timer = setInterval(poll, 1000);
+});
 
-// Orb animator singleton and modal helpers
-(() => {
-  window.PeakPilot = window.PeakPilot || {};
-
-  function attachOrb() {
-    const canvas = document.getElementById('orb');
-    if (!canvas) return;
-    if (window.PeakPilot.orbAnimator) {
-      window.PeakPilot.orbAnimator.destroy();
-      window.PeakPilot.orbAnimator = null;
-    }
-    const animator = new OrbAnimator(canvas);
-    animator.start();
-    window.PeakPilot.orbAnimator = animator;
-  }
-
-  function detachOrb() {
-    if (window.PeakPilot.orbAnimator) {
-      window.PeakPilot.orbAnimator.destroy();
-      window.PeakPilot.orbAnimator = null;
-    }
-  }
-
-  class OrbAnimator {
-    constructor(canvas) {
-      this.c = canvas;
-      this.ctx = canvas.getContext('2d', { alpha: true });
-      this.handleResize = this.resize.bind(this);
-      this.running = false;
-      this.raf = 0;
-      this.t0 = performance.now();
-      this.particles = [];
-      this.baseR = 58;
-      this.waveAmp = 14;
-      this.count = 200;
-      this.noiseSeed = Math.random() * 1000;
-
-      this.resize();
-      this.buildParticles();
-
-      this.ro = new ResizeObserver(() => this.resize());
-      this.ro.observe(this.c);
-    }
-
-    resize() {
-      const dpr = Math.max(1, window.devicePixelRatio || 1);
-      const cssW = parseFloat(getComputedStyle(this.c).width);
-      const cssH = parseFloat(getComputedStyle(this.c).height);
-      this.c.width = Math.round(cssW * dpr);
-      this.c.height = Math.round(cssH * dpr);
-      this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    }
-
-    buildParticles() {
-      this.particles.length = 0;
-      for (let i = 0; i < this.count; i++) {
-        const a = (i / this.count) * Math.PI * 2;
-        this.particles.push({ a, w: 0 });
-      }
-    }
-
-    n1(x) { return Math.sin(x) * 0.5 + Math.sin(2.7 * x + 1.3) * 0.3 + Math.sin(5.1 * x + 2.2) * 0.2; }
-
-    drawOrbGlow(cx, cy, r, t) {
-      const g = this.ctx.createRadialGradient(cx, cy, r * 0.2, cx, cy, r * 1.2);
-      const p = (Math.sin(t * 0.0015) + 1) * 0.5;
-      const c1 = `rgba(${Math.round(90 + 30*p)}, ${Math.round(220)}, ${Math.round(255 - 20*p)}, 0.65)`;
-      const c2 = `rgba(${Math.round(120)}, ${Math.round(255)}, ${Math.round(220)}, 0.08)`;
-      g.addColorStop(0, c1);
-      g.addColorStop(1, c2);
-
-      this.ctx.beginPath();
-      this.ctx.fillStyle = g;
-      this.ctx.arc(cx, cy, r * 1.15, 0, Math.PI * 2);
-      this.ctx.fill();
-    }
-
-    drawWaveRing(cx, cy, baseR, t) {
-      const ctx = this.ctx;
-      ctx.beginPath();
-      for (let i = 0; i < this.particles.length; i++) {
-        const p = this.particles[i];
-        const wobble = this.waveAmp * this.n1(p.a * 1.5 + t * 0.002 + this.noiseSeed);
-        const r = baseR + wobble;
-        const x = cx + Math.cos(p.a) * r;
-        const y = cy + Math.sin(p.a) * r;
-        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-      }
-      ctx.closePath();
-      ctx.strokeStyle = 'rgba(160, 245, 255, 0.7)';
-      ctx.lineWidth = 1.25;
-      ctx.stroke();
-
-      for (let i = 0; i < this.particles.length; i += 12) {
-        const p = this.particles[i];
-        const wobble = this.waveAmp * this.n1(p.a * 1.5 + t * 0.002 + this.noiseSeed);
-        const r = baseR + wobble;
-        const x = cx + Math.cos(p.a) * r;
-        const y = cy + Math.sin(p.a) * r;
-        ctx.beginPath();
-        ctx.arc(x, y, 1.2, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(200, 255, 240, 0.9)';
-        ctx.fill();
-      }
-    }
-
-    frame = (tm) => {
-      if (!this.running) return;
-      const t = tm - this.t0;
-      const w = this.c.clientWidth;
-      const h = this.c.clientHeight;
-      const cx = w / 2;
-      const cy = h / 2;
-
-      this.ctx.clearRect(0, 0, w, h);
-
-      const liveR = this.baseR + Math.sin(t * 0.0023) * 4;
-      this.drawOrbGlow(cx, cy, liveR, t);
-      this.drawWaveRing(cx, cy, liveR, t);
-
-      this.raf = requestAnimationFrame(this.frame);
-    }
-
-    start() {
-      if (this.running) return;
-      this.running = true;
-      this.raf = requestAnimationFrame(this.frame);
-    }
-
-    destroy() {
-      this.running = false;
-      if (this.raf) cancelAnimationFrame(this.raf);
-      if (this.ro) this.ro.disconnect();
-      this.ctx.clearRect(0, 0, this.c.clientWidth, this.c.clientHeight);
-    }
-  }
-
-  window.PeakPilot.attachOrb = attachOrb;
-  window.PeakPilot.detachOrb = detachOrb;
-
-  const _origShow = window.showAnalyzingModal;
-  window.showAnalyzingModal = function(isOpen) {
-    if (typeof _origShow === 'function') _origShow(isOpen);
-    if (isOpen) {
-      setTimeout(() => window.PeakPilot.attachOrb(), 0);
-    } else {
-      window.PeakPilot.detachOrb();
-    }
-  };
-
-  window.setAnalyzeState = function(text) {
-    const el = document.getElementById('pp-state');
-    if (el) el.textContent = text;
-  };
-
-  window.setAnalyzeProgress = function(pct) {
-    const bar = document.querySelector('.pp-progress .bar');
-    if (bar) bar.style.width = `${Math.max(0, Math.min(100, pct))}%`;
-  };
-})();
