@@ -1,7 +1,15 @@
 import os
 import json
 import numpy as np
+<<<<<<< HEAD
 from sklearn.linear_model import Ridge
+=======
+import soundfile as sf
+from scipy.signal import resample_poly, stft
+from sklearn.linear_model import SGDRegressor
+from sklearn.multioutput import MultiOutputRegressor
+import joblib
+>>>>>>> 7dab702 (Refine processing pipeline and progress reporting)
 
 MODEL_DIR = '/tmp/peakpilot/models'
 MODEL_PATH = os.path.join(MODEL_DIR, 'micro_adjust_v1.json')
@@ -55,6 +63,7 @@ def _predict_deltas(feat_vec):
     return dI, dTP, dL
 
 
+<<<<<<< HEAD
 def analyze_and_predict(context, ln1):
     # Build tiny feature vector from available pass-1 loudnorm + rough heuristics
     I = float(ln1.get('input_i', -14.0))
@@ -70,3 +79,48 @@ def analyze_and_predict(context, ln1):
     dTP = max(-0.2, min(0.2, dTP))
     dL = max(-0.2, min(0.2, dL))
     return {'dI': dI, 'dTP': dTP, 'dLRA': dL}
+=======
+def analyze_track(path: Path, timeline: Dict[str, Any]):
+    base = Path(path).parent.parent
+    checksum = checksum_sha256(path)
+    dur = len(timeline.get("sec", []))
+    fingerprint = f"{checksum}-{dur}"
+    features, analysis = _extract_features(path, timeline)
+    model_file = _model_path(base, fingerprint)
+    if model_file.exists():
+        model = joblib.load(model_file)
+    else:
+        base = SGDRegressor(max_iter=1, learning_rate="constant", eta0=0.01)
+        model = MultiOutputRegressor(base)
+        model.partial_fit([features], np.zeros((1,6)))
+        joblib.dump(model, model_file)
+    pred = model.predict([features])[0]
+    ai_adj = {
+        "club": {
+            "dI": float(np.clip(pred[0], -0.8, 0.8)),
+            "dTP": float(np.clip(pred[1], -0.2, 0.0)),
+            "dLRA": float(np.clip(pred[2], -0.8, 0.8)),
+        },
+        "streaming": {
+            "dI": float(np.clip(pred[3], -0.8, 0.8)),
+            "dTP": float(np.clip(pred[4], -0.2, 0.0)),
+            "dLRA": float(np.clip(pred[5], -0.8, 0.8)),
+        },
+    }
+    return features, ai_adj, model, model_file, fingerprint, analysis
+
+
+def update_model(model: MultiOutputRegressor, model_file: Path, fingerprint: str, features: np.ndarray,
+                 club_targets: Dict[str,float], club_measured: Dict[str,float],
+                 str_targets: Dict[str,float], str_measured: Dict[str,float]):
+    err = [
+        club_targets["I"] - club_measured.get("input_i", club_targets["I"]),
+        club_targets["TP"] - club_measured.get("input_tp", club_targets["TP"]),
+        club_targets["LRA"] - club_measured.get("input_lra", club_targets["LRA"]),
+        str_targets["I"] - str_measured.get("input_i", str_targets["I"]),
+        str_targets["TP"] - str_measured.get("input_tp", str_targets["TP"]),
+        str_targets["LRA"] - str_measured.get("input_lra", str_targets["LRA"]),
+    ]
+    model.partial_fit([features], [err])
+    joblib.dump(model, model_file)
+>>>>>>> 7dab702 (Refine processing pipeline and progress reporting)

@@ -83,9 +83,36 @@ def create_app() -> Flask:
         if not sess_dir.exists():
             return jsonify(error="Unknown session"), 400
 
+<<<<<<< HEAD
         files = list(sess_dir.glob("input.*"))
         if not files:
             return jsonify(error="No uploaded file for this session"), 400
+=======
+        seed = {
+            "percent": 0,
+            "phase": "starting",
+            "message": "Starting…",
+            "done": False,
+            "error": None,
+            "downloads": {"club": None, "streaming": None, "premaster": None, "custom": None, "zip": None, "session_json": None},
+            "metrics": {
+                "club": {"input": {}, "output": {}},
+                "streaming": {"input": {}, "output": {}},
+                "premaster": {"input": {}, "output": {}},
+                "custom": {"input": {}, "output": {}},
+                "advisor": {
+                    "recommended_preset": "",
+                    "input_I": None,
+                    "input_TP": None,
+                    "input_LRA": None,
+                    "analysis": {},
+                    "ai_adjustments": {},
+                },
+            },
+            "timeline": {"sec": [], "short_term": [], "tp_flags": []},
+        }
+        write_json_atomic(progress_path(sess_dir), seed)
+>>>>>>> 7dab702 (Refine processing pipeline and progress reporting)
 
         in_path = files[0]
         outdir = sess_dir / "outputs"
@@ -102,6 +129,7 @@ def create_app() -> Flask:
         return jsonify({"ok": True, "session": session}), 200
 
     @app.get("/progress/<session>")
+<<<<<<< HEAD
     def progress(session: str):
         sess_dir = sessions_root / session
         progress_path = sess_dir / "progress.json"
@@ -110,6 +138,28 @@ def create_app() -> Flask:
         data = read_json(progress_path)
         resp = make_response(jsonify(data))
         resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+=======
+    def progress(session):
+        p = progress_path(os.path.join(app.config["UPLOAD_FOLDER"], session))
+        if not os.path.exists(p):
+            resp = make_response(
+                json.dumps(
+                    {
+                        "percent": 0,
+                        "phase": "starting",
+                        "message": "Starting…",
+                        "done": False,
+                        "error": None,
+                    }
+                ),
+                200,
+            )
+        else:
+            with open(p, "r", encoding="utf-8") as fh:
+                resp = make_response(fh.read(), 200)
+        resp.headers["Content-Type"] = "application/json"
+        resp.headers["Cache-Control"] = "no-store, max-age=0"
+>>>>>>> 7dab702 (Refine processing pipeline and progress reporting)
         return resp
 
     @app.get("/download/<session>/<path:filename>")
