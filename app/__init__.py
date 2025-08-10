@@ -18,7 +18,24 @@ def session_id():
 
 
 def ensure_dir(p: Path):
-    p.mkdir(parents=True, exist_ok=True)
+    """Create directory *p* if it doesn't exist."""
+    try:
+        p.mkdir(parents=True, exist_ok=True)
+    except PermissionError as exc:
+        raise RuntimeError(f"Cannot create directory: {p}") from exc
+
+
+def resolve_work_dir() -> Path:
+    """Resolve the working directory used for uploads and outputs."""
+    root = Path(__file__).resolve().parent.parent
+    env = os.environ.get("WORK_DIR")
+    if env:
+        p = Path(env).expanduser()
+        if not p.is_absolute():
+            p = root / p
+    else:
+        p = Path("/tmp/peakpilot")
+    return p
 
 
 def has_audio(p: Path) -> bool:
@@ -35,8 +52,9 @@ def create_app():
     app.secret_key = os.environ.get('SECRET_KEY', 'dev')
     app.config['MAX_CONTENT_LENGTH'] = MAX_UPLOAD_MB * 1024 * 1024
 
-    work_dir = Path(os.environ.get('WORK_DIR', 'work')).resolve()
+    work_dir = resolve_work_dir()
     ensure_dir(work_dir)
+    app.config['WORK_DIR'] = str(work_dir)
 
     @app.get('/')
     def index():
