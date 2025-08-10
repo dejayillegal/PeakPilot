@@ -46,7 +46,7 @@ def create_app():
         f.save(src_path)
 
         seed = {
-            "percent": 1,
+            "percent": 0,
             "phase": "starting",
             "message": "Starting…",
             "done": False,
@@ -82,7 +82,18 @@ def create_app():
     def progress(session):
         p = progress_path(os.path.join(app.config["UPLOAD_FOLDER"], session))
         if not os.path.exists(p):
-            resp = make_response(json.dumps({"percent": 1, "phase": "starting", "message": "Starting…", "done": False, "error": None}), 200)
+            resp = make_response(
+                json.dumps(
+                    {
+                        "percent": 0,
+                        "phase": "starting",
+                        "message": "Starting…",
+                        "done": False,
+                        "error": None,
+                    }
+                ),
+                200,
+            )
         else:
             with open(p, "r", encoding="utf-8") as fh:
                 resp = make_response(fh.read(), 200)
