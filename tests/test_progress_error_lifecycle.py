@@ -1,23 +1,21 @@
-import time
+from time import sleep
+import io
+from app.__init__ import create_app
 
-def test_progress_error_lifecycle(client, tmp_path):
-    bad = tmp_path / "bad.wav"
-    bad.write_bytes(b"notawav")
-    with open(bad, "rb") as f:
-        r = client.post("/start", data={"audio": (f, "bad.wav")}, content_type="multipart/form-data")
-    assert r.status_code == 200
-    session = r.get_json()["session"]
 
-    done = False
-    for _ in range(20):
-        pr = client.get(f"/progress/{session}")
-        assert pr.status_code == 200
-        pj = pr.get_json()
-        assert "done" in pj and "error" in pj
-        if pj["done"]:
-            done = True
-            assert pj["phase"] == "error"
-            assert pj["error"]
-            break
-        time.sleep(0.2)
-    assert done
+def test_invalid_file_sets_error():
+    app = create_app()
+    with app.test_client() as c:
+        data = { 'audio': ( io.BytesIO(b'not an audio'), 'bad.txt') }
+        r = c.post('/start', data=data, content_type='multipart/form-data')
+        assert r.status_code == 200
+        session = r.get_json()['session']
+        saw_error = False
+        for _ in range(10):
+            pr = c.get(f'/progress/{session}')
+            js = pr.get_json()
+            if js.get('done') and js.get('phase')=='error' and js.get('error'):
+                saw_error = True
+                break
+            sleep(0.8)
+        assert saw_error

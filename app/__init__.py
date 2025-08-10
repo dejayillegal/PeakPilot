@@ -1,118 +1,95 @@
-import os, uuid, threading, json
-from flask import Flask, request, jsonify, send_from_directory, render_template, make_response
+import os
+import uuid
+import threading
+from datetime import datetime, timezone
+from flask import Flask, request, jsonify, render_template, send_from_directory, abort, make_response
 
-from .pipeline import run_pipeline, new_session_dir, write_json_atomic, progress_path, ffprobe_ok
+from .pipeline import run_pipeline, init_progress, read_json, atomic_write_json, UPLOAD_KEY
+
+MAX_UPLOAD_MB = 512
+
+
 def create_app():
-    """Create and configure the Flask application.
+    app = Flask(__name__, static_folder='../static', template_folder='../templates')
 
-    The project keeps its ``templates`` and ``static`` directories at the
-    repository root rather than inside the ``app`` package.  When running the
-    application Flask would look for these directories relative to the package
-    and consequently fail to locate them, raising ``TemplateNotFound`` for
-    ``index.html``.
+    # Core config
+    base = os.environ.get('UPLOAD_FOLDER', '/tmp/peakpilot')
+    os.makedirs(base, exist_ok=True)
+    app.config['UPLOAD_FOLDER'] = base
+    app.config['MAX_CONTENT_LENGTH'] = MAX_UPLOAD_MB * 1024 * 1024
 
-    Determine the project root and point Flask at the correct directories so
-    that template rendering and static file serving work in both development and
-    production environments.
-    """
-
-    # Locate repository root (parent directory of this file's package)
-    root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    template_dir = os.path.join(root_dir, "templates")
-    static_dir = os.path.join(root_dir, "static")
-
-    app = Flask(__name__, template_folder=template_dir, static_folder=static_dir)
-    app.config["UPLOAD_FOLDER"] = "/tmp/peakpilot"
-    app.config["MAX_CONTENT_LENGTH"] = 512 * 1024 * 1024
-    os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
-
-    @app.get("/")
+    # Routes
+    @app.get('/')
     def index():
-        return render_template("index.html")
+        return render_template('index.html')
 
-    @app.get("/healthz")
+    @app.get('/healthz')
     def healthz():
-        return jsonify({"status": "ok", "ffmpeg": ffprobe_ok("ffmpeg"), "ffprobe": ffprobe_ok("ffprobe")})
+        # Simple tool check
+        import shutil, subprocess
+        ffmpeg_ok = shutil.which('ffmpeg') is not None
+        ffprobe_ok = shutil.which('ffprobe') is not None
+        return jsonify({
+            'ok': True,
+            'time_utc': datetime.now(timezone.utc).isoformat(),
+            'ffmpeg': ffmpeg_ok,
+            'ffprobe': ffprobe_ok,
+            'upload_dir': app.config['UPLOAD_FOLDER']
+        }), 200
 
-    @app.post("/start")
+    @app.post('/start')
     def start():
-        f = request.files.get("audio")
-        if not f:
-            return jsonify({"error": "No audio file provided (form field must be 'audio')."}), 400
+        if UPLOAD_KEY not in request.files:
+            return jsonify({'error': 'No file field named "audio"'}), 400
+        f = request.files[UPLOAD_KEY]
+        if not f.filename:
+            return jsonify({'error': 'Empty filename'}), 400
 
         session = uuid.uuid4().hex[:12]
-        sess_dir = new_session_dir(app.config["UPLOAD_FOLDER"], session)
-        src_path = os.path.join(sess_dir, "upload")
-        f.save(src_path)
+        sess_dir = os.path.join(app.config['UPLOAD_FOLDER'], session)
+        up_dir = os.path.join(sess_dir, 'uploads')
+        out_dir = os.path.join(sess_dir, 'outputs')
+        os.makedirs(up_dir, exist_ok=True)
+        os.makedirs(out_dir, exist_ok=True)
 
-        seed = {
-            "percent": 0,
-            "phase": "starting",
-            "message": "Starting…",
-            "done": False,
-            "error": None,
-            "downloads": {"club": None, "streaming": None, "premaster": None, "custom": None, "zip": None, "session_json": None},
-            "metrics": {
-                "club": {"input": {}, "output": {}},
-                "streaming": {"input": {}, "output": {}},
-                "premaster": {"input": {}, "output": {}},
-                "custom": {"input": {}, "output": {}},
-                "advisor": {
-                    "recommended_preset": "",
-                    "input_I": None,
-                    "input_TP": None,
-                    "input_LRA": None,
-                    "analysis": {},
-                    "ai_adjustments": {},
-                },
-            },
-            "timeline": {"sec": [], "short_term": [], "tp_flags": []},
-        }
-        write_json_atomic(progress_path(sess_dir), seed)
+        # Save upload
+        in_path = os.path.join(up_dir, f.filename)
+        f.save(in_path)
 
-        params = request.form.to_dict(flat=True)
-        stems = {}
-        gains = {}
-        t = threading.Thread(target=run_pipeline, args=(session, sess_dir, src_path, params, stems, gains), daemon=True)
+        # Seed progress BEFORE thread (fixes "Starting… forever")
+        progress_path = os.path.join(sess_dir, 'progress.json')
+        init = init_progress()
+        atomic_write_json(progress_path, init)
+
+        # Kick pipeline thread (daemon)
+        t = threading.Thread(
+            target=run_pipeline,
+            args=(session, sess_dir, in_path),
+            daemon=True
+        )
         t.start()
 
-        return jsonify({"session": session, "progress_url": f"/progress/{session}"})
+        return jsonify({'session': session}), 200
 
-    @app.get("/progress/<session>")
+    @app.get('/progress/<session>')
     def progress(session):
-        p = progress_path(os.path.join(app.config["UPLOAD_FOLDER"], session))
-        if not os.path.exists(p):
-            resp = make_response(
-                json.dumps(
-                    {
-                        "percent": 0,
-                        "phase": "starting",
-                        "message": "Starting…",
-                        "done": False,
-                        "error": None,
-                    }
-                ),
-                200,
-            )
-        else:
-            with open(p, "r", encoding="utf-8") as fh:
-                resp = make_response(fh.read(), 200)
-        resp.headers["Content-Type"] = "application/json"
-        resp.headers["Cache-Control"] = "no-store, max-age=0"
+        sess_dir = os.path.join(app.config['UPLOAD_FOLDER'], session)
+        progress_path = os.path.join(sess_dir, 'progress.json')
+        if not os.path.exists(progress_path):
+            return jsonify({'error': 'Session not found'}), 404
+        data = read_json(progress_path)
+        resp = make_response(jsonify(data))
+        resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
         return resp
 
-    @app.get("/download/<session>/<path:filename>")
+    @app.get('/download/<session>/<path:filename>')
     def download(session, filename):
-        sess_dir = os.path.join(app.config["UPLOAD_FOLDER"], session)
-        safe = os.path.abspath(sess_dir)
-        if not os.path.abspath(os.path.join(sess_dir, filename)).startswith(safe):
-            return jsonify({"error": "Invalid path"}), 400
-        return send_from_directory(sess_dir, filename, as_attachment=True)
+        sess_dir = os.path.join(app.config['UPLOAD_FOLDER'], session)
+        out_dir = os.path.join(sess_dir, 'outputs')
+        if not os.path.commonpath([out_dir, os.path.join(out_dir, filename)]) == out_dir:
+            abort(400)
+        if not os.path.exists(os.path.join(out_dir, filename)):
+            abort(404)
+        return send_from_directory(out_dir, filename, as_attachment=True)
 
     return app
-
-
-app = create_app()
-
-__all__ = ["create_app", "app"]
-
