@@ -46,6 +46,8 @@ def create_app():
         f.save(src_path)
 
         seed = {
+            "pct": 0,
+            "status": "starting",
             "percent": 0,
             "phase": "starting",
             "message": "Starting…",
@@ -67,6 +69,12 @@ def create_app():
                 },
             },
             "timeline": {"sec": [], "short_term": [], "tp_flags": []},
+            "masters": {
+                "club": {"state": "queued", "pct": 0, "message": ""},
+                "stream": {"state": "queued", "pct": 0, "message": ""},
+                "unlimited": {"state": "queued", "pct": 0, "message": ""},
+                "custom": {"state": "queued", "pct": 0, "message": ""},
+            },
         }
         write_json_atomic(progress_path(sess_dir), seed)
 
@@ -85,11 +93,19 @@ def create_app():
             resp = make_response(
                 json.dumps(
                     {
+                        "pct": 0,
+                        "status": "starting",
                         "percent": 0,
                         "phase": "starting",
                         "message": "Starting…",
                         "done": False,
                         "error": None,
+                        "masters": {
+                            "club": {"state": "queued", "pct": 0, "message": ""},
+                            "stream": {"state": "queued", "pct": 0, "message": ""},
+                            "unlimited": {"state": "queued", "pct": 0, "message": ""},
+                            "custom": {"state": "queued", "pct": 0, "message": ""},
+                        },
                     }
                 ),
                 200,
