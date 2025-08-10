@@ -1,4 +1,5 @@
-import os, json, threading
+import os
+import threading
 from pathlib import Path
 from flask import (
     Flask,
@@ -78,10 +79,10 @@ def create_app():
         write_json(progress_path(session), base_progress())
         update_progress(
             session,
-            {
-                "percent": 1,
-                "phase": "queued",
-                "message": "Queued",
+            1,
+            "queued",
+            "Queued",
+            patch={
                 "preset": params["preset"],
                 "options": {
                     "trim": params["trim"],
@@ -104,7 +105,9 @@ def create_app():
 
     @app.route("/progress/<session>", methods=["GET"])
     def progress(session: str):
-        return jsonify(read_json(progress_path(session), base_progress()))
+        resp = jsonify(read_json(progress_path(session), base_progress()))
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
 
     @app.route("/download/<session>/<path:file>", methods=["GET"])
     def download_file(session: str, file: str):
