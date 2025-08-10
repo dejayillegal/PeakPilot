@@ -348,6 +348,9 @@
   // Polling hook: update per-master progress & activate when done
   window.updateMasterCardsProgress = function(progress){
     const m=progress?.masters||{};
+    if (m.streaming && !m.stream)   m.stream   = m.streaming;
+    if (m.premaster && !m.unlimited) m.unlimited = m.premaster;
+    if (m.premaster_unlimited && !m.unlimited) m.unlimited = m.premaster_unlimited;
     for(const id of MasterCards.keys()){
       const card=MasterCards.get(id); if(!card) continue;
       const st=m[id]; if(!st) continue;
@@ -378,6 +381,30 @@
         card.player=player; card.ready=true;
       }
     }
+    (async () => {
+      const s = window.PeakPilot?.session;
+      if (!s) return;
+      for (const [id, card] of MasterCards) {
+        if (card.ready) continue;
+        const base = `/download/${s}/`;
+        const url  = base + encodeURIComponent(card.wavKey);
+        try {
+          const r = await fetch(url, { method:"GET", cache:"no-store" });
+          if (r.ok) {
+            card.linkWav.href = url;
+            card.linkInfo.href = base + encodeURIComponent(card.infoKey);
+            card.linkWav.removeAttribute('aria-disabled');
+            card.linkInfo.removeAttribute('aria-disabled');
+            card.linkWav.removeAttribute('tabindex');
+            card.linkInfo.removeAttribute('tabindex');
+            card.btn.removeAttribute('disabled');
+            const player = new TrackPlayer({ button:card.btn, waveCanvas:card.wave, ribbonCanvas:card.ribbon, specCanvas:card.spec, url, onDrawOverlay:(pl)=>pl._drawTPHot() });
+            card.player = player; card.ready = true;
+            console.warn(`[PP] Enabled ${id} via file presence (progress missing)`);
+          }
+        } catch {}
+      }
+    })();
   };
 
   // Original preview hookup (called once after session available)

@@ -8,7 +8,6 @@ from typing import Dict, Any, Tuple
 from pathlib import Path
 from datetime import datetime
 import zipfile
-import shutil
 from .ai_module import analyze_track
 from .util_fs import write_manifest
 
@@ -237,7 +236,16 @@ def loudnorm_two_pass(src, dst, I, TP, LRA=11, sr=None, bits=24, smart_limiter=F
         ]
         if sr != 44100:
             cmd2 += ["-ar", str(sr)]
-        cmd2 += ["-c:a", "pcm_s24le" if bits == 24 else "pcm_s16le", part]
+        cmd2 += [
+            "-c:a", "pcm_s24le" if bits == 24 else "pcm_s16le",
+            "-metadata", "encoded_by=PeakPilot",
+            "-metadata", "software=PeakPilot",
+            "-metadata", "comment=Mastered by PeakPilot",
+            "-metadata", "IENG=PeakPilot",
+            "-metadata", "ICMT=Mastered by PeakPilot",
+            "-f", "wav",
+            part,
+        ]
         run(cmd2)
         if not os.path.exists(part) or os.path.getsize(part) == 0:
             raise RuntimeError("ffmpeg render failed")
@@ -248,14 +256,28 @@ def loudnorm_two_pass(src, dst, I, TP, LRA=11, sr=None, bits=24, smart_limiter=F
         return _loudnorm_two_pass_py(src, dst, I, TP, LRA=LRA, sr=sr, bits=bits, smart_limiter=smart_limiter)
 
 
-def normalize_peak_to(src, dst, peak_dbfs=-6.0, sr=48000, bits=24, dither="triangular"):
-    data, _ = _read_mono(src)
-    peak = np.max(np.abs(data)) + 1e-9
-    target = 10 ** (peak_dbfs / 20)
-    gain = target / peak
-    out = np.clip(data * gain, -1.0, 1.0)
-    subtype = "PCM_24" if bits == 24 else "PCM_16"
-    sf.write(dst, out, sr, subtype=subtype)
+def normalize_peak_to(src, dst, peak_dbfs=-6.0, sr=48000, bits=24):
+    in_peak = measure_peak_dbfs(src)
+    gain_db = peak_dbfs - in_peak
+    part = dst + ".part"
+    cmd = [
+        "ffmpeg", "-nostdin", "-hide_banner", "-y",
+        "-i", src,
+        "-filter:a", f"volume={gain_db:.2f}dB",
+        "-ar", str(sr),
+        "-c:a", "pcm_s24le" if bits == 24 else "pcm_s16le",
+        "-metadata", "encoded_by=PeakPilot",
+        "-metadata", "software=PeakPilot",
+        "-metadata", "comment=Mastered by PeakPilot",
+        "-metadata", "IENG=PeakPilot",
+        "-metadata", "ICMT=Mastered by PeakPilot",
+        "-f", "wav",
+        part,
+    ]
+    run(cmd)
+    if not os.path.exists(part) or os.path.getsize(part) == 0:
+        raise RuntimeError("ffmpeg render failed")
+    os.replace(part, dst)
     return dst
 
 
@@ -300,16 +322,7 @@ def run_pipeline(session: str, sess_dir: str, src_path: str, params: Dict[str, A
         update_progress(sess_dir, pct=5, status="analyzing", message="Analyzing input…")
         info = ffprobe_info(src_path)
         validate_upload(info)
-        # create lightweight preview for client-side waveform
-        try:
-            run([
-                "ffmpeg", "-nostdin", "-hide_banner", "-y",
-                "-i", src_path,
-                "-ar", "48000", "-c:a", "pcm_s24le",
-                str(Path(sess_dir) / "input_preview.wav"),
-            ])
-        except Exception:
-            shutil.copyfile(src_path, Path(sess_dir) / "input_preview.wav")
+        # preview already generated at upload stage
         add_manifest("input_preview.wav", "audio/wav")
         ln_in = measure_loudnorm_json(src_path)
         tl = ebur128_timeline(src_path)
@@ -381,9 +394,9 @@ def run_pipeline(session: str, sess_dir: str, src_path: str, params: Dict[str, A
         current_target = "stream"
         update_progress(sess_dir, pct=70, status="mastering", message="Rendering Streaming…", masters={"stream": {"state": "rendering", "pct": 0, "message": "Rendering..."}})
         streaming_wav = os.path.join(sess_dir, "stream_master.wav")
-        loudnorm_two_pass(src_path, streaming_wav, I=-9.5 + ai_adj["streaming"]["dI"], TP=-1.0 + ai_adj["streaming"]["dTP"], LRA=11, sr=44100, bits=24)
+        loudnorm_two_pass(src_path, streaming_wav, I=-9.5 + ai_adj["streaming"]["dI"], TP=-1.5 + ai_adj["streaming"]["dTP"], LRA=11, sr=44100, bits=24)
         update_progress(sess_dir, masters={"stream": {"state": "finalizing", "pct": 99, "message": "Finalizing..."}})
-        ok_stream, _, _ = post_verify(streaming_wav, -9.5 + ai_adj["streaming"]["dI"], -1.0 + ai_adj["streaming"]["dTP"])
+        ok_stream, _, _ = post_verify(streaming_wav, -9.5 + ai_adj["streaming"]["dI"], -1.5 + ai_adj["streaming"]["dTP"])
         str_metrics = measure_loudnorm_json(streaming_wav)
         info_out = ffprobe_info(streaming_wav)
         sha = checksum_sha256(streaming_wav)
