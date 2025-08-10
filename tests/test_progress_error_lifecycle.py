@@ -1,5 +1,6 @@
 from time import sleep
 import io
+from time import sleep
 from app.__init__ import create_app
 
 
