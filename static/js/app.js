@@ -84,16 +84,50 @@ function updateButtons(activeId, playing){
 // Upload & polling
 const form = $('#upload-form');
 const fileInput = $('#file-input');
+const dropArea = $('#drop-area');
+const dropText = $('#drop-text');
+const analyzeBtn = $('#analyze-btn');
 const modal = $('#pp-modal');
 const bar = $('#pp-bar');
 const stageEl = $('#pp-stage');
 const flavorEl = $('#pp-flavor');
 const outputs = $('#outputs-section');
+modal.hidden = true;
 
 let session = null;
 let timer = null;
 let originalURL = null;
 let refI = -14;
+
+function setFile(file){
+  if (!file) return;
+  const dt = new DataTransfer();
+  dt.items.add(file);
+  fileInput.files = dt.files;
+  dropText.textContent = file.name;
+  analyzeBtn.disabled = false;
+}
+
+dropArea.addEventListener('click', ()=> fileInput.click());
+dropArea.addEventListener('dragover', (e)=>{ e.preventDefault(); dropArea.classList.add('hover'); });
+dropArea.addEventListener('dragleave', ()=> dropArea.classList.remove('hover'));
+dropArea.addEventListener('drop', (e)=>{
+  e.preventDefault();
+  dropArea.classList.remove('hover');
+  const file = e.dataTransfer.files?.[0];
+  setFile(file);
+});
+
+fileInput.addEventListener('change', ()=>{
+  const file = fileInput.files?.[0];
+  if (file){
+    dropText.textContent = file.name;
+    analyzeBtn.disabled = false;
+  } else {
+    dropText.textContent = 'Drag & drop audio here or click to browse';
+    analyzeBtn.disabled = true;
+  }
+});
 
 form.addEventListener('submit', async (e)=>{
   e.preventDefault();
