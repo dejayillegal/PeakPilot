@@ -18,6 +18,63 @@ const phase = document.getElementById('phase');
 const percent = document.getElementById('percent');
 const messages = document.getElementById('messages');
 
+(function breatheOrb(){
+  const c = document.getElementById('orb');
+  if (!c || !c.getContext) return; // CSS fallback will show
+  const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+  const cssW = c.width, cssH = c.height;
+  c.width = cssW * dpr; c.height = cssH * dpr; c.style.width = cssW + 'px'; c.style.height = cssH + 'px';
+  const ctx = c.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  const W = cssW, H = cssH, CX = W/2, CY = H/2;
+  const BASE_R = 56, DOTS = 110;
+  const dots = Array.from({length: DOTS}, (_,i)=>({
+    a:(i/DOTS)*Math.PI*2,
+    r: BASE_R + 16*Math.random(),
+    s: 0.7 + Math.random()*0.8,
+    p: Math.random()*Math.PI*2,
+    o: 0.25 + Math.random()*0.45
+  }));
+  let last = performance.now();
+
+  function tick(now){
+    const dt = (now - last)/1000; last = now;
+    const t = now/1000;
+
+    const breath = 1 + 0.05*Math.sin(t*0.9);
+    ctx.clearRect(0,0,W,H);
+
+    const grd = ctx.createRadialGradient(CX, CY, 8, CX, CY, 120);
+    grd.addColorStop(0, 'rgba(31,241,233,.26)');
+    grd.addColorStop(1, 'rgba(31,241,233,0)');
+    ctx.fillStyle = grd; ctx.beginPath(); ctx.arc(CX,CY,110,0,Math.PI*2); ctx.fill();
+
+    ctx.beginPath();
+    ctx.fillStyle = 'rgba(31,241,233,.78)';
+    ctx.arc(CX, CY, 32*breath, 0, Math.PI*2); ctx.fill();
+
+    ctx.beginPath();
+    ctx.strokeStyle = 'rgba(31,241,233,.25)';
+    ctx.lineWidth = 2;
+    ctx.arc(CX, CY, 64*breath, 0, Math.PI*2); ctx.stroke();
+
+    dots.forEach(d=>{
+      d.p += dt * d.s;
+      const R = (d.r + 8*Math.sin(d.p*1.1)) * breath;
+      const x = CX + Math.cos(d.a + d.p*0.09) * R;
+      const y = CY + Math.sin(d.a + d.p*0.09) * R;
+      ctx.beginPath();
+      ctx.fillStyle = `rgba(31,241,233,${d.o + 0.25*Math.sin(d.p*1.7)})`;
+      ctx.arc(x, y, 1.4 + 0.9*Math.sin(d.p*1.3), 0, Math.PI*2);
+      ctx.fill();
+    });
+
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+})();
+
 const preview = document.getElementById('preview');
 const playBtn = document.getElementById('play');
 const curEl = document.getElementById('cur');
