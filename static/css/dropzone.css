@@ -1,0 +1,62 @@
+:root {
+  --pp-accent: #50b4ff; /* match your "Choose file" accent */
+}
+
+/* Basic look */
+.dropzone {
+  position: relative;
+  border: 1px dashed rgba(255,255,255,0.25);
+  border-radius: 14px;
+  padding: 18px;
+  text-align: center;
+  transition: border-color .15s ease, box-shadow .15s ease, background .15s ease;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.02));
+}
+
+/* Focus & keyboard */
+.dropzone:focus-visible {
+  outline: 2px solid var(--pp-accent);
+  outline-offset: 2px;
+}
+
+/* Drag over highlight */
+.dropzone.over {
+  border-color: rgba(120,255,220,0.55);
+  box-shadow: 0 0 0 3px rgba(120,255,220,0.15) inset, 0 6px 18px rgba(0,0,0,0.25);
+}
+
+/* Uploading state (fallback progress) */
+.dropzone.uploading {
+  background:
+    linear-gradient(90deg, var(--pp-accent) var(--dz-progress, 0%), transparent 0) no-repeat,
+    linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.02));
+  background-size: var(--dz-progress, 0%) 4px, 100% 100%;
+  background-position: 0 100%, 0 0;
+}
+
+/* Success tick (subtle) */
+.dropzone.ok {
+  border-color: rgba(43,211,142,0.5);
+  box-shadow: 0 0 0 2px rgba(43,211,142,0.18) inset;
+}
+
+/* Linklike button styling */
+.linklike {
+  border: none;
+  background: none;
+  color: var(--pp-accent);
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.linklike:hover { opacity: 0.9; }
+
+/* Screen-reader only utility */
+.sr-only {
+  position: absolute !important;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0);
+  white-space: nowrap; border: 0;
+}

@@ -6,6 +6,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/results.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/dropzone.css') }}">
   <script src="https://unpkg.com/wavesurfer.js@7"></script>
 </head>
 <body>
@@ -56,7 +57,13 @@
       </div>
     </div>
 
-    <div class="buttons"><button id="analyze" class="btn" disabled>Analyze</button></div>
+    <div class="pp-fileinfo">
+      <div class="pp-filemeta">No file selected</div>
+      <div class="pp-fileprog"><div class="bar" style="width:0%"></div></div>
+      <div id="pp-error" class="pp-error" hidden></div>
+    </div>
+
+    <div class="buttons"><button id="pp-analyze" class="btn" disabled>Analyze</button></div>
 
     <!-- Waveform + overlays -->
     <div id="preview" class="preview hidden card subtle">
@@ -157,5 +164,6 @@
 
 <script src="{{ url_for('static', filename='js/results.js') }}"></script>
 <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+<script src="{{ url_for('static', filename='js/app-upload.js') }}" defer></script>
 </body>
 </html>

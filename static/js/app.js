@@ -1,40 +1,4 @@
-let session = null;
-const fileInput = document.getElementById('file');
-const analyzeBtn = document.getElementById('analyze');
-const progBar = document.querySelector('.pp-fileprog .bar');
-const fileInfo = document.querySelector('.pp-fileinfo');
-
-function bytes(n){
-  if (n > 1e6) return (n/1e6).toFixed(1)+' MB';
-  if (n > 1e3) return (n/1e3).toFixed(1)+' kB';
-  return n + ' B';
-}
-
-fileInput?.addEventListener('change', e => {
-  const file = e.target.files[0];
-  if (!file) return;
-  const xhr = new XMLHttpRequest();
-  const fd = new FormData();
-  if (session) fd.append('session', session);
-  fd.append('reset','1');
-  fd.append('file', file);
-  xhr.upload.onprogress = ev => {
-    if (ev.lengthComputable) {
-      progBar.style.width = (ev.loaded/ev.total*100).toFixed(1)+'%';
-    }
-  };
-  xhr.onload = () => {
-    const res = JSON.parse(xhr.responseText || '{}');
-    if (res.ok){
-      session = res.session;
-      fileInfo.textContent = `${res.filename} • ${bytes(res.size)}`;
-      fileInfo.dataset.state = 'uploaded';
-      analyzeBtn.disabled = false;
-    }
-  };
-  xhr.open('POST','/upload');
-  xhr.send(fd);
-});
+const analyzeBtn = document.getElementById('pp-analyze');
 
 function showAnalyzingModal(open){
   const modal = document.getElementById('modal');
@@ -52,6 +16,8 @@ function setAnalyzeState(msg){
 }
 
 async function poll(){
+  const session = window.PeakPilot?.session;
+  if (!session) return;
   const r = await fetch(`/progress/${session}`, {cache:'no-store'});
   const j = await r.json();
   setAnalyzeProgress(j.pct || 0);
@@ -63,6 +29,7 @@ async function poll(){
 let timer;
 
 analyzeBtn?.addEventListener('click', async () => {
+  const session = window.PeakPilot?.session;
   if (!session) return;
   analyzeBtn.disabled = true;
   showAnalyzingModal(true);
