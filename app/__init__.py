@@ -60,12 +60,13 @@ def create_app():
             "message": "Starting…",
             "done": False,
             "error": None,
-            "downloads": {"club": None, "streaming": None, "premaster": None, "custom": None, "zip": None, "session_json": None},
+            "downloads": {"club": None, "streaming": None, "unlimited": None, "custom": None, "zip": None, "session_json": None},
             "metrics": {
-                "club": {"input": {}, "output": {}},
-                "streaming": {"input": {}, "output": {}},
-                "premaster": {"input": {}, "output": {}},
-                "custom": {"input": {}, "output": {}},
+                "input": {},
+                "club": {},
+                "streaming": {},
+                "unlimited": {},
+                "custom": {},
                 "advisor": {
                     "recommended_preset": "",
                     "input_I": None,
@@ -78,7 +79,7 @@ def create_app():
             "timeline": {"sec": [], "short_term": [], "tp_flags": []},
             "masters": {
                 "club": {"state": "queued", "pct": 0, "message": ""},
-                "stream": {"state": "queued", "pct": 0, "message": ""},
+                "streaming": {"state": "queued", "pct": 0, "message": ""},
                 "unlimited": {"state": "queued", "pct": 0, "message": ""},
                 "custom": {"state": "queued", "pct": 0, "message": ""},
             },
@@ -109,7 +110,7 @@ def create_app():
                         "error": None,
                         "masters": {
                             "club": {"state": "queued", "pct": 0, "message": ""},
-                            "stream": {"state": "queued", "pct": 0, "message": ""},
+                            "streaming": {"state": "queued", "pct": 0, "message": ""},
                             "unlimited": {"state": "queued", "pct": 0, "message": ""},
                             "custom": {"state": "queued", "pct": 0, "message": ""},
                         },
