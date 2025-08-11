@@ -2,6 +2,7 @@ import os, uuid, threading, json
 from flask import Flask, request, jsonify, render_template, make_response, send_file
 from pathlib import Path
 import shutil
+from werkzeug.utils import secure_filename
 
 from .pipeline import run_pipeline, new_session_dir, write_json_atomic, progress_path, ffprobe_ok, make_preview
 def create_app():
@@ -125,33 +126,25 @@ def create_app():
         resp.headers["Cache-Control"] = "no-store, max-age=0"
         return resp
 
-    from .util_fs import session_root, read_manifest, sha256sum
+    from .util_fs import session_root
 
     @app.get("/download/<session>/<key>")
     def download(session, key):
-        root = session_root(app.config["UPLOAD_FOLDER"], session)
-        if key == "input_preview.wav":
-            p = root / "input_preview.wav"
-            if p.exists() and p.stat().st_size > 0:
-                return send_file(p, as_attachment=True, download_name=p.name, mimetype="audio/wav")
-        try:
-            mf = read_manifest(root)
-        except Exception:
-            return ("Unknown file key", 404)
-        meta = mf.get(key)
+        root = session_root(app.config["UPLOAD_FOLDER"], secure_filename(session))
+        man_path = root / "manifest.json"
+        man = {}
+        if man_path.exists():
+            try:
+                man = json.loads(man_path.read_text())
+            except Exception:
+                man = {}
+        meta = man.get(key) or next((v for v in man.values() if v.get("filename") == key), None)
         if not meta:
             return ("Unknown file key", 404)
-        f = root / meta.get("filename", key)
-        if not f.exists():
+        path = root / meta["filename"]
+        if not path.exists():
             return ("File missing", 404)
-        if sha256sum(f) != meta.get("sha256"):
-            return ("Checksum mismatch", 409)
-        return send_file(
-            f,
-            as_attachment=True,
-            download_name=f.name,
-            mimetype=meta.get("type", "application/octet-stream"),
-        )
+        return send_file(path, mimetype="application/octet-stream", as_attachment=True, download_name=meta["filename"])
 
     from .routes.stream import bp as stream_bp
     app.register_blueprint(stream_bp)

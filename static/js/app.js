@@ -237,6 +237,9 @@ async function poll(url, originalBlobUrl, session){
               metrics: { input: metrics.input || {}, output: metrics.unlimited || {} }
             }
           ], { showCustom: false });
+          if (typeof updateMasterCardsProgress === 'function') {
+            updateMasterCardsProgress(j);
+          }
         }
         try {
           const gains = setABGains(j);
