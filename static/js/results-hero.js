@@ -13,23 +13,37 @@
     return DecodeCache.get(url);
   }
 
-  const previewFromDownload = (url) => url.replace("/download/","/stream/").replace(/([^/]+)\.wav$/,"$1_preview.wav");
-
   function setDownloadLink(anchor, url){
-    if(!anchor) return;
-    if(url){
-      anchor.href=url;
+    if (!anchor) return;
+    if (url) {
+      anchor.href = url;
       anchor.setAttribute('download','');
-      anchor.removeAttribute('aria-disabled');
       anchor.classList.remove('is-disabled');
-      anchor.removeAttribute('tabindex');
-    }else{
+      anchor.removeAttribute('aria-disabled');
+    } else {
       anchor.removeAttribute('href');
       anchor.removeAttribute('download');
-      anchor.setAttribute('aria-disabled','true');
       anchor.classList.add('is-disabled');
-      anchor.setAttribute('tabindex','-1');
+      anchor.setAttribute('aria-disabled','true');
     }
+  }
+
+  function setPill(cardEl, state){
+    const pill = cardEl.querySelector('.pp-statepill');
+    if(!pill) return;
+    pill.dataset.state = state;
+    pill.textContent = state==='rendering' ? `Rendering…`
+                    : state==='finalizing' ? 'Finalizing…'
+                    : state==='done' ? 'Ready'
+                    : state==='error' ? 'Error'
+                    : 'Queued';
+  }
+
+  function showPreviewUnavailable(cardEl){
+    cardEl.querySelector('.pp-wave')?.replaceWith(document.createTextNode('Preview unavailable'));
+    cardEl.querySelector('.pp-ribbon')?.replaceWith(document.createTextNode(''));
+    cardEl.querySelector('.pp-spec')?.replaceWith(document.createTextNode(''));
+    cardEl.querySelector('.pp-play')?.setAttribute('disabled','disabled');
   }
 
   // ---------- DRAW HELPERS ----------
@@ -300,11 +314,11 @@
     return legacy;
   }
 
-  const MasterCards=new Map(); // id -> { el, btn, wave, ribbon, spec, pill, wavKey, infoKey, ready, player }
+  const MasterCards=new Map(); // id -> { el, btn, wave, ribbon, spec, pill, linkWav, linkInfo, player }
 
   function escapeHtml(s){ return String(s).replace(/[&<>"]/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])); }
 
-  function buildCard({ id, title, wavKey, infoKey }){
+  function buildCard({ id, title }){
     const art=document.createElement('article'); art.className='pp-card'; art.id=`card-${id}`;
     art.innerHTML=`
       <h3>${escapeHtml(title)}</h3>
@@ -317,13 +331,12 @@
       </div>
       <div class="pp-ribbon"><canvas></canvas></div>
       <div class="pp-spec"><canvas></canvas><div class="axis"></div><div class="legend">Spectrum (dB)</div></div>
-      <table class="pp-metrics"><thead></thead><tbody></tbody></table>
+      <div class="metrics"></div>
       <div class="pp-downloads">
-        <a class="pp-dl" data-key="wav"  aria-disabled="true" tabindex="-1"><span class="emo">🎼</span> <span>Download WAV</span></a>
-        <a class="pp-dl" data-key="info" aria-disabled="true" tabindex="-1"><span class="emo">📝</span> <span>Download INFO</span></a>
+        <a class="pp-dl" data-key="wav"><span class="emo">🎼</span><span>Download WAV</span></a>
+        <a class="pp-dl" data-key="info"><span class="emo">📝</span><span>Download INFO</span></a>
       </div>
     `;
-    // register
     MasterCards.set(id, {
       id, el: art,
       btn: art.querySelector('.pp-play'),
@@ -333,28 +346,27 @@
       pill: art.querySelector('.pp-statepill'),
       linkWav: art.querySelector('.pp-dl[data-key="wav"]'),
       linkInfo: art.querySelector('.pp-dl[data-key="info"]'),
-      wavKey, infoKey, procUrl:null, ready:false, player:null
+      player:null
     });
     return art;
   }
 
-  function renderMetricsTable(art, cfg){
-    const thead=art.querySelector('thead'), tbody=art.querySelector('tbody');
-    thead.innerHTML=""; tbody.innerHTML="";
-    const head=document.createElement('tr'); const blank=document.createElement('th'); blank.className='row-label'; head.appendChild(blank);
-    const thIn=document.createElement('th'); thIn.textContent='Input'; head.appendChild(thIn);
-    const thOut=document.createElement('th'); thOut.textContent='Output'; head.appendChild(thOut);
-    thead.appendChild(head);
+  function renderMetricsTable(cardEl, cfg){
     const m = cfg.metrics || {};
-    function fmt(v){ return (v===null||v===undefined) ? '—' : Number(v).toFixed(2); }
-    function addRow(label,a,b){ const tr=document.createElement('tr'); const th=document.createElement('th'); th.textContent=label; th.className='row-label'; tr.appendChild(th); const td1=document.createElement('td'); td1.className='value'; td1.textContent=fmt(a); tr.appendChild(td1); const td2=document.createElement('td'); td2.className='value'; td2.textContent=fmt(b); tr.appendChild(td2); tbody.appendChild(tr); }
-    if(cfg.id==='unlimited'){
-      addRow('Peak dBFS', m.input?.peak_dbfs, m.output?.peak_dbfs);
-      return;
+    let html = '';
+    if (cfg.id === 'unlimited') {
+      html = row('Peak dBFS', fmt(m.input?.peak_dbfs), fmt(m.output?.peak_dbfs));
+    } else {
+      html =
+        row('LUFS-I',   fmt(m.input?.lufs_integrated), fmt(m.output?.lufs_integrated)) +
+        row('TP (dBTP)',fmt(m.input?.true_peak_db),    fmt(m.output?.true_peak_db)) +
+        row('LRA (LU)', fmt(m.input?.lra),             fmt(m.output?.lra));
     }
-    addRow('LUFS-I', m.input?.lufs_integrated, m.output?.lufs_integrated);
-    addRow('TP (dBTP)', m.input?.true_peak_db, m.output?.true_peak_db);
-    addRow('LRA (LU)', m.input?.lra, m.output?.lra);
+    const box = cardEl.querySelector('.metrics');
+    if (box) box.innerHTML = html;
+
+    function fmt(v){ return v==null ? '—' : Number(v).toFixed(2); }
+    function row(k,a,b){ return `<div class="mrow"><span>${k}</span><span>${a}</span><span>${b}</span></div>`; }
   }
 
   function wireDownloadShield(container){
@@ -371,86 +383,37 @@
     mount.innerHTML='';
     for(const c of cards){
       if(c.id==='custom' && !showCustom) continue;
-      const art=buildCard({ id:c.id, title:c.title, wavKey:c.wavKey, infoKey:c.infoKey });
-      renderMetricsTable(art, c);
+      const art=buildCard({ id:c.id, title:c.title });
       mount.appendChild(art);
       const card=MasterCards.get(c.id);
-      card.procUrl = c.processedUrl || null;
-      setDownloadLink(card.linkWav, c.downloadWav);
-      setDownloadLink(card.linkInfo, c.downloadInfo);
+      setDownloadLink(card.linkWav, c.downloadWav || null);
+      setDownloadLink(card.linkInfo, c.downloadInfo || null);
+      if (!c.processedUrl) {
+        showPreviewUnavailable(card.el);
+      } else {
+        card.player = new TrackPlayer({
+          button: card.btn,
+          waveCanvas: card.wave,
+          ribbonCanvas: card.ribbon,
+          specCanvas: card.spec,
+          url: c.processedUrl,
+          onDrawOverlay: (pl)=> pl._drawTPHot()
+        });
+      }
+      renderMetricsTable(card.el, c);
     }
     wireDownloadShield(mount);
   };
 
-  // Polling hook: update per-master progress & activate when done
+  // Polling hook: update per-master progress & activate metrics
   window.updateMasterCardsProgress = function(progress){
     const m = progress?.masters || {};
-    const metrics = progress?.metrics || {};
-    if (m.streaming && !m.stream)   m.stream   = m.streaming;
-    if (m.premaster && !m.unlimited) m.unlimited = m.premaster;
-    if (m.premaster_unlimited && !m.unlimited) m.unlimited = m.premaster_unlimited;
-    for(const [id, card] of MasterCards){
-      const st = m[id]; if(!st) continue;
-      card.pill.dataset.state=st.state||'queued';
-      card.pill.textContent = st.state==='rendering' ? `Rendering… ${st.pct|0}%`
-                            : st.state==='finalizing' ? 'Finalizing…'
-                            : st.state==='done' ? 'Ready'
-                            : st.state==='error' ? 'Error'
-                            : 'Queued';
-
-      const cfg = { id, metrics: { input: metrics.input || {}, output: metrics[id] || {} } };
-      renderMetricsTable(card.el, cfg);
-
-      if(st.state==='done' && !card.ready){
-        const baseDl=`/download/${window.PeakPilot.session}/`;
-        const dlUrl= baseDl+encodeURIComponent(card.wavKey);
-        setDownloadLink(card.linkWav, dlUrl);
-        setDownloadLink(card.linkInfo, baseDl+encodeURIComponent(card.infoKey));
-        card.btn.removeAttribute('disabled');
-
-        const playUrl = card.procUrl;
-        if(!playUrl){
-          card.wave.replaceWith(document.createTextNode("Preview unavailable"));
-          if(card.ribbon) card.ribbon.replaceWith(document.createTextNode(""));
-          if(card.spec)   card.spec.replaceWith(document.createTextNode(""));
-          card.btn.setAttribute('disabled','disabled');
-          card.ready=true;
-        }else{
-          const player = new TrackPlayer({
-            button: card.btn,
-            waveCanvas: card.wave,
-            ribbonCanvas: card.ribbon,
-            specCanvas: card.spec,
-            url: playUrl,
-            onDrawOverlay: (pl)=> pl._drawTPHot()
-          });
-          card.player=player; card.ready=true;
-        }
-      }
+    const g = progress?.metrics || {};
+    for (const [id, card] of MasterCards.entries()){
+      const st = m[id]?.state || 'queued';
+      setPill(card.el, st);
+      renderMetricsTable(card.el, { id, metrics: { input: g.input||{}, output: g[id]||{} } });
     }
-    (async () => {
-      const s = window.PeakPilot?.session;
-      if (!s) return;
-      for (const [id, card] of MasterCards) {
-        if (card.ready) continue;
-        const base = `/download/${s}/`;
-        const dlUrl  = base + encodeURIComponent(card.wavKey);
-        try {
-          const r = await fetch(dlUrl, { method:"HEAD", cache:"no-store" });
-          if (r.ok) {
-            setDownloadLink(card.linkWav, dlUrl);
-            setDownloadLink(card.linkInfo, base + encodeURIComponent(card.infoKey));
-            card.btn.removeAttribute('disabled');
-            const playUrl = card.procUrl || previewFromDownload(dlUrl);
-            if(playUrl){
-              const player = new TrackPlayer({ button:card.btn, waveCanvas:card.wave, ribbonCanvas:card.ribbon, specCanvas:card.spec, url: playUrl, onDrawOverlay:(pl)=>pl._drawTPHot() });
-              card.player = player; card.ready = true;
-              console.warn(`[PP] Enabled ${id} via file presence (progress missing)`);
-            }
-          }
-        } catch {}
-      }
-    })();
   };
 
   // Original preview hookup (called once after session available)

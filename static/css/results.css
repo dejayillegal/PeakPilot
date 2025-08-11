@@ -41,12 +41,11 @@
 .pp-spec .axis { position:absolute; inset:0; pointer-events:none; }
 .pp-spec .legend { position:absolute; left:8px; top:6px; font-size:.75rem; color:var(--pp-muted); }
 
-.pp-metrics { width:100%; border-collapse:separate; border-spacing:0; margin-top:8px; border:1px solid var(--pp-border); border-radius:12px; overflow:hidden; }
-.pp-metrics thead th { background: rgba(255,255,255,.05); color: var(--pp-accent); font-weight:600; }
-.pp-metrics th, .pp-metrics td { padding:8px 10px; font-size:.92rem; text-align:left; border-bottom:1px solid rgba(255,255,255,.06); }
-.pp-metrics tr:last-child th, .pp-metrics tr:last-child td { border-bottom:none; }
-.pp-metrics .row-label { color: var(--pp-muted); width:84px; }
-.pp-metrics .value { color:#eaf6ff; }
+.metrics { margin-top:8px; border:1px solid var(--pp-border); border-radius:12px; overflow:hidden; }
+.metrics .mrow { display:flex; }
+.metrics .mrow span { flex:1; padding:8px 10px; font-size:.92rem; border-bottom:1px solid rgba(255,255,255,.06); }
+.metrics .mrow span:first-child { flex:0 0 100px; color: var(--pp-muted); }
+.metrics .mrow:last-child span { border-bottom:none; }
 
 .pp-downloads { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
 .pp-dl { display:inline-flex; align-items:center; gap:8px; padding:8px 10px; border-radius:10px; border:1px solid var(--pp-border); background: rgba(255,255,255,.03); color:#eaf6ff; text-decoration:none; }

@@ -15,13 +15,6 @@ import numpy as np
 import soundfile as sf
 
 
-CANON = {
-    "original_preview": "input_preview.wav",
-    "club": "club_master.wav",
-    "streaming": "stream_master.wav",
-    "unlimited": "premaster_unlimited.wav",
-}
-
 
 def ffprobe_ok(tool: str) -> bool:
     """Best effort check for availability of ``tool``.
@@ -222,67 +215,56 @@ def rename_previews(sess: Path):
             src.replace(dst)
 
 
-def write_manifest(sess: Path, files: dict):
-    manifest = {}
-    for key, filename in files.items():
-        p = sess / filename
+def write_manifest_keyed_by_filename(sess: Path, filenames: list[str]):
+    man = {}
+    for fn in filenames:
+        p = sess / fn
         if not p.exists():
             continue
-        manifest[filename] = {
-            "filename": filename,
-            "sha256": sha256_file(p),
-            "bytes": p.stat().st_size,
-        }
-    (sess / "manifest.json").write_text(json.dumps(manifest, indent=2))
+        man[fn] = {"filename": fn, "sha256": sha256_file(p), "bytes": p.stat().st_size}
+    (sess / "manifest.json").write_text(json.dumps(man, indent=2))
 
 
 def finalize_session(sess_dir: str, metrics: dict):
     sess = Path(sess_dir)
-    # normalize preview filenames so the HEAD test can succeed
+    # 1) Normalize preview names so the UI HEAD/GET works
     rename_previews(sess)
-
-    write_manifest(
-        sess,
-        {
-            "club": CANON["club"],
-            "streaming": CANON["streaming"],
-            "unlimited": CANON["unlimited"],
-            "original_preview": CANON["original_preview"],
-            "info_club": "ClubMaster_24b_48k_INFO.txt",
-            "info_streaming": "StreamingMaster_24b_44k1_INFO.txt",
-            "info_unlimited": "UnlimitedPremaster_24b_48k_INFO.txt",
-            "zip": "Masters_AND_INFO.zip",
-        },
-    )
-
-    pj = {}
+    # 2) Write manifest keyed by filenames (simplest /download)
+    write_manifest_keyed_by_filename(sess, [
+        "club_master.wav",
+        "stream_master.wav",
+        "premaster_unlimited.wav",
+        "input_preview.wav",
+        "ClubMaster_24b_48k_INFO.txt",
+        "StreamingMaster_24b_44k1_INFO.txt",
+        "UnlimitedPremaster_24b_48k_INFO.txt",
+    ])
+    # 3) Merge final progress (do not clobber)
     pj_path = sess / "progress.json"
+    pj = {}
     if pj_path.exists():
         try:
             pj = json.loads(pj_path.read_text())
         except Exception:
             pj = {}
-
-    pj.update(
-        {
-            "done": True,
-            "percent": 100,
-            "stage": "done",
-            "downloads_ready": True,
-            "masters": {
-                "club": {"state": "done", "pct": 100, "message": "Ready"},
-                "streaming": {"state": "done", "pct": 100, "message": "Ready"},
-                "unlimited": {"state": "done", "pct": 100, "message": "Ready"},
-            },
-            "metrics": {
-                "input": metrics.get("input", {}),
-                "club": metrics.get("club", {}),
-                "streaming": metrics.get("streaming", {}),
-                "unlimited": metrics.get("unlimited", {}),
-            },
-            "ts": int(time.time()),
-        }
-    )
+    pj.update({
+        "done": True,
+        "percent": 100,
+        "stage": "done",
+        "downloads_ready": True,
+        "masters": {
+            "club": {"state": "done", "pct": 100, "message": "Ready"},
+            "streaming": {"state": "done", "pct": 100, "message": "Ready"},
+            "unlimited": {"state": "done", "pct": 100, "message": "Ready"},
+        },
+        "metrics": {
+            "input": metrics.get("input", {}),
+            "club": metrics.get("club", {}),
+            "streaming": metrics.get("streaming", {}),
+            "unlimited": metrics.get("unlimited", {}),
+        },
+        "ts": int(time.time()),
+    })
     pj_path.write_text(json.dumps(pj, indent=2))
 
 

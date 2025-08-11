@@ -29,8 +29,7 @@ def test_outputs_downloadable(client, sine_file):
         'premaster_unlimited.wav',
         'ClubMaster_24b_48k_INFO.txt',
         'StreamingMaster_24b_44k1_INFO.txt',
-        'UnlimitedPremaster_24b_48k_INFO.txt',
-        'Masters_AND_INFO.zip'
+        'UnlimitedPremaster_24b_48k_INFO.txt'
     ]
     for key in expected:
         assert key in manifest

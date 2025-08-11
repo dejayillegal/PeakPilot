@@ -130,21 +130,20 @@ def create_app():
 
     @app.get("/download/<session>/<key>")
     def download(session, key):
-        root = session_root(app.config["UPLOAD_FOLDER"], secure_filename(session))
-        man_path = root / "manifest.json"
-        man = {}
-        if man_path.exists():
-            try:
-                man = json.loads(man_path.read_text())
-            except Exception:
-                man = {}
-        meta = man.get(key) or next((v for v in man.values() if v.get("filename") == key), None)
+        sess_dir = session_root(app.config["UPLOAD_FOLDER"], secure_filename(session))
+        man_path = sess_dir / "manifest.json"
+        if not man_path.exists():
+            return ("No manifest", 404)
+        man = json.loads(man_path.read_text())
+        meta = man.get(key)
+        if not meta:
+            meta = next((v for v in man.values() if v.get("filename") == key), None)
         if not meta:
             return ("Unknown file key", 404)
-        path = root / meta["filename"]
-        if not path.exists():
+        p = sess_dir / meta["filename"]
+        if not p.exists():
             return ("File missing", 404)
-        return send_file(path, mimetype="application/octet-stream", as_attachment=True, download_name=meta["filename"])
+        return send_file(p, mimetype="application/octet-stream", as_attachment=True, download_name=meta["filename"])
 
     from .routes.stream import bp as stream_bp
     app.register_blueprint(stream_bp)
