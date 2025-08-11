@@ -321,15 +321,23 @@
     return art;
   }
 
-  function renderMetricsTable(art, metrics){
+  function renderMetricsTable(art, cfg){
     const thead=art.querySelector('thead'), tbody=art.querySelector('tbody');
     thead.innerHTML=""; tbody.innerHTML="";
     const head=document.createElement('tr'); const blank=document.createElement('th'); blank.className='row-label'; head.appendChild(blank);
-    metrics.labelRow.forEach(lbl=>{ const th=document.createElement('th'); th.textContent=lbl; head.appendChild(th); }); thead.appendChild(head);
-    if(metrics.input?.length){ const tr=document.createElement('tr'); const th=document.createElement('th'); th.textContent='Input'; th.className='row-label'; tr.appendChild(th);
-      metrics.input.forEach(v=>{ const td=document.createElement('td'); td.className='value'; td.textContent=v; tr.appendChild(td); }); tbody.appendChild(tr); }
-    if(metrics.output?.length){ const tr=document.createElement('tr'); const th=document.createElement('th'); th.textContent='Output'; th.className='row-label'; tr.appendChild(th);
-      metrics.output.forEach(v=>{ const td=document.createElement('td'); td.className='value'; td.textContent=v; tr.appendChild(td); }); tbody.appendChild(tr); }
+    const thIn=document.createElement('th'); thIn.textContent='Input'; head.appendChild(thIn);
+    const thOut=document.createElement('th'); thOut.textContent='Output'; head.appendChild(thOut);
+    thead.appendChild(head);
+    const m = cfg.metrics || {};
+    function fmt(v){ return (v===null||v===undefined) ? '—' : Number(v).toFixed(2); }
+    function addRow(label,a,b){ const tr=document.createElement('tr'); const th=document.createElement('th'); th.textContent=label; th.className='row-label'; tr.appendChild(th); const td1=document.createElement('td'); td1.className='value'; td1.textContent=fmt(a); tr.appendChild(td1); const td2=document.createElement('td'); td2.className='value'; td2.textContent=fmt(b); tr.appendChild(td2); tbody.appendChild(tr); }
+    if(cfg.id==='unlimited'){
+      addRow('Peak dBFS', m.input?.peak_dbfs, m.output?.peak_dbfs);
+      return;
+    }
+    addRow('LUFS-I', m.input?.lufs_integrated, m.output?.lufs_integrated);
+    addRow('TP (dBTP)', m.input?.true_peak_db, m.output?.true_peak_db);
+    addRow('LRA (LU)', m.input?.lra, m.output?.lra);
   }
 
   function wireDownloadShield(container){
@@ -347,7 +355,7 @@
     for(const c of cards){
       if(c.id==='custom' && !showCustom) continue;
       const art=buildCard({ id:c.id, title:c.title, wavKey:c.wavKey, infoKey:c.infoKey });
-      renderMetricsTable(art, c.metrics);
+      renderMetricsTable(art, c);
       mount.appendChild(art);
     }
     wireDownloadShield(mount);

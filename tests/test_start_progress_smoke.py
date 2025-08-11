@@ -16,7 +16,7 @@ def test_start_progress_smoke(client, sine_file):
         pj = pr.get_json()
         if pj['phase'] != 'starting':
             phase_seen = pj['phase']
-        if pj['metrics']['club']['input'].get('I') is not None:
+        if pj['metrics']['input'].get('lufs_integrated') is not None:
             metrics_seen = True
             break
         time.sleep(0.5)

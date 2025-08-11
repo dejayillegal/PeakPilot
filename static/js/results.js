@@ -209,31 +209,21 @@
     return `rgba(${r},${g},${b},${a})`;
   }
 
-  function buildMetricsTable(metrics) {
-    const table = document.createElement('table');
-    table.className = 'pp-metrics';
-    const thead = document.createElement('thead');
-    const headTr = document.createElement('tr');
-    const empty = document.createElement('th'); empty.className = 'row-label'; headTr.appendChild(empty);
-    metrics.labelRow.forEach(lbl => {
-      const th = document.createElement('th'); th.textContent = lbl; headTr.appendChild(th);
-    });
-    thead.appendChild(headTr); table.appendChild(thead);
-    const tbody = document.createElement('tbody');
-    if (metrics.input) {
-      const tr = document.createElement('tr');
-      const th = document.createElement('th'); th.textContent = 'Input'; th.className = 'row-label'; tr.appendChild(th);
-      metrics.input.forEach(v => { const td = document.createElement('td'); td.className = 'value'; td.textContent = v; tr.appendChild(td); });
-      tbody.appendChild(tr);
+  function metricsTable(cfg){
+    const m = cfg.metrics || {};
+    const wrap = document.createElement('div'); wrap.className = 'pp-metrics';
+    function fmtNum(v){ return (v === null || v === undefined) ? '—' : Number(v).toFixed(2); }
+    function row(label,a,b){ return `<div class="mrow"><span>${label}</span><span>${fmtNum(a)}</span><span>${fmtNum(b)}</span></div>`; }
+    let html = '<div class="mrow"><span></span><span>Input</span><span>Output</span></div>';
+    if (cfg.id === 'unlimited') {
+      html += row('Peak dBFS', m.input?.peak_dbfs, m.output?.peak_dbfs);
+    } else {
+      html += row('LUFS‑I', m.input?.lufs_integrated, m.output?.lufs_integrated);
+      html += row('TP (dBTP)', m.input?.true_peak_db, m.output?.true_peak_db);
+      html += row('LRA (LU)', m.input?.lra, m.output?.lra);
     }
-    if (metrics.output) {
-      const tr = document.createElement('tr');
-      const th = document.createElement('th'); th.textContent = 'Output'; th.className = 'row-label'; tr.appendChild(th);
-      metrics.output.forEach(v => { const td = document.createElement('td'); td.className = 'value'; td.textContent = v; tr.appendChild(td); });
-      tbody.appendChild(tr);
-    }
-    table.appendChild(tbody);
-    return table;
+    wrap.innerHTML = html;
+    return wrap;
   }
 
   function buildCard(session, cfg) {
@@ -254,7 +244,7 @@
     wave.appendChild(canvas); wavewrap.appendChild(wave);
     art.appendChild(wavewrap);
 
-    art.appendChild(buildMetricsTable(cfg.metrics));
+    art.appendChild(metricsTable(cfg));
 
     const downloads = document.createElement('div'); downloads.className = 'pp-downloads';
     const wav = document.createElement('a'); wav.className = 'pp-dl'; wav.href = `/download/${session}/${encodeURIComponent(cfg.wavKey)}`; wav.appendChild(iconDownload()); wav.appendChild(document.createTextNode(' Download WAV'));

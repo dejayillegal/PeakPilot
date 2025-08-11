@@ -15,15 +15,13 @@ def sha256sum(path):
     return h.hexdigest()
 
 def write_manifest(root: Path, manifest: dict):
-    """Write manifest.json with checksums and sizes for files."""
-    data = {}
-    for key, meta in manifest.items():
-        f = root / meta['filename']
-        sha = sha256sum(f)
-        size = f.stat().st_size
-        data[key] = {**meta, 'sha256': sha, 'size': size}
+    """Persist ``manifest`` to ``manifest.json``.
+
+    The caller is expected to provide checksum and size information; this
+    helper simply writes out the supplied mapping without recomputing hashes.
+    """
     with open(root / 'manifest.json', 'w', encoding='utf-8') as fh:
-        json.dump(data, fh)
+        json.dump(manifest, fh)
 
 def read_manifest(root: Path) -> dict:
     with open(root / 'manifest.json', 'r', encoding='utf-8') as fh:
