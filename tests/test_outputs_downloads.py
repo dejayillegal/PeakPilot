@@ -24,12 +24,12 @@ def test_outputs_downloadable(client, sine_file):
         manifest = json.load(fh)
     expected = [
         'input_preview.wav',
-        'club_master.wav',
-        'stream_master.wav',
-        'premaster_unlimited.wav',
-        'ClubMaster_24b_48k_INFO.txt',
-        'StreamingMaster_24b_44k1_INFO.txt',
-        'UnlimitedPremaster_24b_48k_INFO.txt'
+        'test__club_master.wav',
+        'test__stream_master.wav',
+        'test__premaster_unlimited.wav',
+        'test__ClubMaster_24b_48k_INFO.txt',
+        'test__StreamingMaster_24b_44k1_INFO.txt',
+        'test__UnlimitedPremaster_24b_48k_INFO.txt'
     ]
     for key in expected:
         assert key in manifest
