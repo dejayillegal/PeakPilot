@@ -43,6 +43,13 @@ def create_app():
         if not f:
             return jsonify({"error": "No audio file provided (form field must be 'audio')."}), 400
 
+        orig_name = f.filename or "upload"
+        stem = Path(orig_name).stem
+        import re
+        safe_stem = re.sub(r"[^A-Za-z0-9_\-]+", "_", stem).strip("_")
+        if not safe_stem:
+            safe_stem = "track"
+
         session = uuid.uuid4().hex[:12]
         sess_dir = new_session_dir(app.config["UPLOAD_FOLDER"], session)
         src_path = os.path.join(sess_dir, "upload")
@@ -84,13 +91,18 @@ def create_app():
                 "unlimited": {"state": "queued", "pct": 0, "message": ""},
                 "custom": {"state": "queued", "pct": 0, "message": ""},
             },
+            "original_stem": safe_stem,
         }
         write_json_atomic(progress_path(sess_dir), seed)
 
         params = request.form.to_dict(flat=True)
         stems = {}
         gains = {}
-        t = threading.Thread(target=run_pipeline, args=(session, sess_dir, src_path, params, stems, gains), daemon=True)
+        t = threading.Thread(
+            target=run_pipeline,
+            args=(session, sess_dir, src_path, params, stems, gains, orig_name, safe_stem),
+            daemon=True,
+        )
         t.start()
 
         return jsonify({"session": session, "progress_url": f"/progress/{session}"})

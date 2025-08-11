@@ -225,21 +225,186 @@ def write_manifest_keyed_by_filename(sess: Path, filenames: list[str]):
     (sess / "manifest.json").write_text(json.dumps(man, indent=2))
 
 
-def finalize_session(sess_dir: str, metrics: dict):
+def sanitize(s: str) -> str:
+    import re
+    s = re.sub(r"[^A-Za-z0-9_\-]+", "_", s).strip("_")
+    return s or "track"
+
+
+def build_final_filenames(stem: str) -> dict:
+    stem = sanitize(stem)
+    return {
+        "wav": {
+            "club": f"{stem}__club_master.wav",
+            "streaming": f"{stem}__stream_master.wav",
+            "unlimited": f"{stem}__premaster_unlimited.wav",
+        },
+        "info": {
+            "club": f"{stem}__ClubMaster_24b_48k_INFO.txt",
+            "streaming": f"{stem}__StreamingMaster_24b_44k1_INFO.txt",
+            "unlimited": f"{stem}__UnlimitedPremaster_24b_48k_INFO.txt",
+        },
+        "preview": {
+            "original": "input_preview.wav",
+            "club": "club_master_preview.wav",
+            "streaming": "stream_master_preview.wav",
+            "unlimited": "premaster_unlimited_preview.wav",
+        },
+        "zip": f"{stem}__Masters_AND_INFO.zip",
+    }
+
+
+def probe_source_info(wav_path: Path) -> dict:
+    try:
+        cmd = (
+            "ffprobe -v error -select_streams a:0 -show_entries "
+            "stream=codec_name,channels,channel_layout,bit_rate,sample_rate,bits_per_sample "
+            "-show_entries format=duration -of json "
+            f"{shlex.quote(str(wav_path))}"
+        )
+        out = subprocess.check_output(cmd, shell=True).decode("utf-8", "ignore")
+        data = json.loads(out)
+        st = (data.get("streams") or [{}])[0]
+        fmt = data.get("format") or {}
+        sr = int(st.get("sample_rate") or 0) or None
+        bd = st.get("bits_per_sample")
+        return {
+            "codec_name": st.get("codec_name"),
+            "sample_rate": sr,
+            "channels": st.get("channels"),
+            "channel_layout": st.get("channel_layout"),
+            "bit_depth": bd,
+            "duration": float(fmt.get("duration") or 0.0) or None,
+        }
+    except Exception:
+        return {}
+
+
+def source_block_text(orig_name: str, src: dict) -> str:
+    sr = f"{src.get('sample_rate')} Hz" if src.get("sample_rate") else "—"
+    ch = src.get("channels")
+    chs = {1: "mono", 2: "stereo"}.get(ch, str(ch) if ch else "—")
+    bd = f"{int(src['bit_depth'])}-bit" if src.get("bit_depth") else "—"
+    fmt = src.get("codec_name") or "—"
+    dur = src.get("duration")
+    if dur:
+        m = int(dur // 60)
+        s = dur - m * 60
+        duration = f"{m:02d}:{s:05.2f}"
+    else:
+        duration = "—"
+    lines = [
+        "SOURCE",
+        f"  Original: {orig_name}",
+        f"  Duration: {duration}",
+        f"  Sample rate: {sr}",
+        f"  Channels: {chs}",
+        f"  Bit depth: {bd}",
+        f"  PCM format: {fmt}",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def write_info_file(
+    path: Path,
+    title: str,
+    metrics_in: dict,
+    metrics_out: dict,
+    extra: dict,
+    original_name: str,
+    src_info: dict,
+):
+    with path.open("w") as f:
+        f.write(source_block_text(original_name, src_info))
+        f.write(f"{title}\n")
+        f.write("METRICS\n")
+
+        def num(x):
+            return "—" if x is None else f"{x:.2f}"
+
+        if (
+            "lufs_integrated" in metrics_out
+            or "true_peak_db" in metrics_out
+            or "lra" in metrics_out
+        ):
+            f.write(
+                f"  LUFS-I: in {num(metrics_in.get('lufs_integrated'))}  -> out {num(metrics_out.get('lufs_integrated'))}\n"
+            )
+            f.write(
+                f"  TP dBTP: in {num(metrics_in.get('true_peak_db'))} -> out {num(metrics_out.get('true_peak_db'))}\n"
+            )
+            f.write(
+                f"  LRA: in {num(metrics_in.get('lra'))} -> out {num(metrics_out.get('lra'))}\n"
+            )
+        if "peak_dbfs" in metrics_out:
+            f.write(
+                f"  Peak dBFS: in {num(metrics_in.get('peak_dbfs'))} -> out {num(metrics_out.get('peak_dbfs'))}\n"
+            )
+        f.write("\n")
+
+
+def finalize_session(sess_dir: str, metrics: dict, original_name: str, original_stem: str):
     sess = Path(sess_dir)
-    # 1) Normalize preview names so the UI HEAD/GET works
+
     rename_previews(sess)
-    # 2) Write manifest keyed by filenames (simplest /download)
-    write_manifest_keyed_by_filename(sess, [
-        "club_master.wav",
-        "stream_master.wav",
-        "premaster_unlimited.wav",
-        "input_preview.wav",
-        "ClubMaster_24b_48k_INFO.txt",
-        "StreamingMaster_24b_44k1_INFO.txt",
-        "UnlimitedPremaster_24b_48k_INFO.txt",
-    ])
-    # 3) Merge final progress (do not clobber)
+
+    names = build_final_filenames(original_stem)
+
+    moves = {
+        "club_master.wav": names["wav"]["club"],
+        "stream_master.wav": names["wav"]["streaming"],
+        "premaster_unlimited.wav": names["wav"]["unlimited"],
+    }
+    for src, dst in moves.items():
+        a, b = sess / src, sess / dst
+        if a.exists() and a != b:
+            a.replace(b)
+
+    srcinfo = probe_source_info(sess / "upload") if (sess / "upload").exists() else {}
+    info_args = [
+        ("Club (48k/24, target −7.2 LUFS, −0.8 dBTP)", "club"),
+        ("Streaming (44.1k/24, target −9.5 LUFS, −1.0 dBTP)", "streaming"),
+        ("Unlimited Premaster (48k/24, peak −6 dBFS)", "unlimited"),
+    ]
+    for title, key in info_args:
+        info_path = sess / names["info"][key]
+        write_info_file(
+            info_path,
+            title,
+            metrics.get("input", {}),
+            metrics.get(key, {}),
+            {},
+            original_name,
+            srcinfo,
+        )
+
+    zip_path = sess / names["zip"]
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        for fn in names["wav"].values():
+            p = sess / fn
+            if p.exists():
+                zf.write(p, fn)
+        for fn in names["info"].values():
+            p = sess / fn
+            if p.exists():
+                zf.write(p, fn)
+
+    man_files = [
+        names["wav"]["club"],
+        names["wav"]["streaming"],
+        names["wav"]["unlimited"],
+        names["preview"]["original"],
+        names["preview"]["club"],
+        names["preview"]["streaming"],
+        names["preview"]["unlimited"],
+        names["info"]["club"],
+        names["info"]["streaming"],
+        names["info"]["unlimited"],
+        names["zip"],
+    ]
+    write_manifest_keyed_by_filename(sess, man_files)
+
     pj_path = sess / "progress.json"
     pj = {}
     if pj_path.exists():
@@ -247,24 +412,27 @@ def finalize_session(sess_dir: str, metrics: dict):
             pj = json.loads(pj_path.read_text())
         except Exception:
             pj = {}
-    pj.update({
-        "done": True,
-        "percent": 100,
-        "stage": "done",
-        "downloads_ready": True,
-        "masters": {
-            "club": {"state": "done", "pct": 100, "message": "Ready"},
-            "streaming": {"state": "done", "pct": 100, "message": "Ready"},
-            "unlimited": {"state": "done", "pct": 100, "message": "Ready"},
-        },
-        "metrics": {
-            "input": metrics.get("input", {}),
-            "club": metrics.get("club", {}),
-            "streaming": metrics.get("streaming", {}),
-            "unlimited": metrics.get("unlimited", {}),
-        },
-        "ts": int(time.time()),
-    })
+    pj.update(
+        {
+            "filenames": names,
+            "downloads_ready": True,
+            "done": True,
+            "percent": 100,
+            "stage": "done",
+            "masters": {
+                "club": {"state": "done", "pct": 100, "message": "Ready"},
+                "streaming": {"state": "done", "pct": 100, "message": "Ready"},
+                "unlimited": {"state": "done", "pct": 100, "message": "Ready"},
+            },
+            "metrics": {
+                "input": metrics.get("input", {}),
+                "club": metrics.get("club", {}),
+                "streaming": metrics.get("streaming", {}),
+                "unlimited": metrics.get("unlimited", {}),
+            },
+            "ts": int(time.time()),
+        }
+    )
     pj_path.write_text(json.dumps(pj, indent=2))
 
 
@@ -467,21 +635,26 @@ def post_verify(path: str, target_I: float, target_TP: float) -> Tuple[bool, flo
         return True, 0.0, 0.0
 
 
-def run_pipeline(session: str, sess_dir: str, src_path: str, params: Dict[str, Any], stems, gains):
+
+
+def run_pipeline(
+    session: str,
+    sess_dir: str,
+    src_path: str,
+    params: Dict[str, Any],
+    stems,
+    gains,
+    original_name: str,
+    original_stem: str,
+):
     current_target = None
     try:
-        manifest = {}
-        # --- analysis stage -------------------------------------------------
         update_progress(sess_dir, pct=5, status="analyzing", message="Analyzing input…")
         info = ffprobe_info(src_path)
         validate_upload(info)
-        # preview already generated at upload stage
-        preview_path = Path(sess_dir) / "input_preview.wav"
-        add_output(manifest, "input_preview.wav", preview_path)
         ln_in = measure_loudnorm_json(src_path)
         tl = ebur128_timeline(src_path)
         peak_in = measure_peak_dbfs(src_path)
-        # lightweight AI analysis
         _, ai_adj, _, _, fingerprint, analysis = analyze_track(Path(src_path), tl)
 
         data = read_json(progress_path(sess_dir))
@@ -508,22 +681,37 @@ def run_pipeline(session: str, sess_dir: str, src_path: str, params: Dict[str, A
 
         # --- club master ----------------------------------------------------
         current_target = "club"
-        update_progress(sess_dir, pct=45, status="mastering", message="Rendering Club…", masters={"club": {"state": "rendering", "pct": 0, "message": "Rendering..."}})
+        update_progress(
+            sess_dir,
+            pct=45,
+            status="mastering",
+            message="Rendering Club…",
+            masters={"club": {"state": "rendering", "pct": 0, "message": "Rendering..."}},
+        )
         club_wav = os.path.join(sess_dir, "club_master.wav")
-        loudnorm_two_pass(src_path, club_wav, I=-7.2 + ai_adj["club"]["dI"], TP=-1.0 + ai_adj["club"]["dTP"], LRA=11, sr=48000, bits=24)
+        loudnorm_two_pass(
+            src_path,
+            club_wav,
+            I=-7.2 + ai_adj["club"]["dI"],
+            TP=-1.0 + ai_adj["club"]["dTP"],
+            LRA=11,
+            sr=48000,
+            bits=24,
+        )
         update_progress(sess_dir, masters={"club": {"state": "finalizing", "pct": 99, "message": "Finalizing..."}})
-        ok_club, _, _ = post_verify(club_wav, -7.2 + ai_adj["club"]["dI"], -1.0 + ai_adj["club"]["dTP"])
-        make_preview(Path(sess_dir) / "club_master.wav", Path(sess_dir) / "club_master_preview.wav", sr=48000, stereo=True)
+        ok_club, _, _ = post_verify(
+            club_wav, -7.2 + ai_adj["club"]["dI"], -1.0 + ai_adj["club"]["dTP"]
+        )
+        make_preview(
+            Path(sess_dir) / "club_master.wav",
+            Path(sess_dir) / "club_master_preview.wav",
+            sr=48000,
+            stereo=True,
+        )
         club_metrics = measure_loudnorm_json(club_wav)
         info_out = ffprobe_info(club_wav)
-        sha, _ = add_output(manifest, "club_master.wav", club_wav)
-        write_json_atomic(os.path.join(sess_dir, "club_info.json"), info_out)
-        with open(os.path.join(sess_dir, "ClubMaster_24b_48k_INFO.txt"), "w", encoding="utf-8") as fh:
-            fh.write(f"Sample rate: {info_out['sr']}\nBits: 24\nLUFS-I: {club_metrics['input_i']:.2f}\nTP: {club_metrics['input_tp']:.2f}\nLRA: {club_metrics['input_lra']:.2f}\n")
-        add_output(manifest, "ClubMaster_24b_48k_INFO.txt", os.path.join(sess_dir, "ClubMaster_24b_48k_INFO.txt"))
-        add_output(manifest, "club_info.json", os.path.join(sess_dir, "club_info.json"))
+        sha = sha256_file(club_wav)
         d = read_json(progress_path(sess_dir))
-        d["downloads"]["club"] = os.path.basename(club_wav)
         d["metrics"]["club"] = {
             "lufs_integrated": club_metrics["input_i"],
             "true_peak_db": club_metrics["input_tp"],
@@ -542,22 +730,37 @@ def run_pipeline(session: str, sess_dir: str, src_path: str, params: Dict[str, A
 
         # --- streaming master ----------------------------------------------
         current_target = "stream"
-        update_progress(sess_dir, pct=70, status="mastering", message="Rendering Streaming…", masters={"streaming": {"state": "rendering", "pct": 0, "message": "Rendering..."}})
+        update_progress(
+            sess_dir,
+            pct=70,
+            status="mastering",
+            message="Rendering Streaming…",
+            masters={"streaming": {"state": "rendering", "pct": 0, "message": "Rendering..."}},
+        )
         streaming_wav = os.path.join(sess_dir, "stream_master.wav")
-        loudnorm_two_pass(src_path, streaming_wav, I=-9.5 + ai_adj["streaming"]["dI"], TP=-1.5 + ai_adj["streaming"]["dTP"], LRA=11, sr=44100, bits=24)
+        loudnorm_two_pass(
+            src_path,
+            streaming_wav,
+            I=-9.5 + ai_adj["streaming"]["dI"],
+            TP=-1.5 + ai_adj["streaming"]["dTP"],
+            LRA=11,
+            sr=44100,
+            bits=24,
+        )
         update_progress(sess_dir, masters={"streaming": {"state": "finalizing", "pct": 99, "message": "Finalizing..."}})
-        ok_stream, _, _ = post_verify(streaming_wav, -9.5 + ai_adj["streaming"]["dI"], -1.5 + ai_adj["streaming"]["dTP"])
-        make_preview(Path(sess_dir) / "stream_master.wav", Path(sess_dir) / "stream_master_preview.wav", sr=44100, stereo=True)
+        ok_stream, _, _ = post_verify(
+            streaming_wav, -9.5 + ai_adj["streaming"]["dI"], -1.5 + ai_adj["streaming"]["dTP"]
+        )
+        make_preview(
+            Path(sess_dir) / "stream_master.wav",
+            Path(sess_dir) / "stream_master_preview.wav",
+            sr=44100,
+            stereo=True,
+        )
         str_metrics = measure_loudnorm_json(streaming_wav)
         info_out = ffprobe_info(streaming_wav)
-        sha, _ = add_output(manifest, "stream_master.wav", streaming_wav)
-        write_json_atomic(os.path.join(sess_dir, "stream_info.json"), info_out)
-        with open(os.path.join(sess_dir, "StreamingMaster_24b_44k1_INFO.txt"), "w", encoding="utf-8") as fh:
-            fh.write(f"Sample rate: {info_out['sr']}\nBits: 24\nLUFS-I: {str_metrics['input_i']:.2f}\nTP: {str_metrics['input_tp']:.2f}\nLRA: {str_metrics['input_lra']:.2f}\n")
-        add_output(manifest, "StreamingMaster_24b_44k1_INFO.txt", os.path.join(sess_dir, "StreamingMaster_24b_44k1_INFO.txt"))
-        add_output(manifest, "stream_info.json", os.path.join(sess_dir, "stream_info.json"))
+        sha = sha256_file(streaming_wav)
         d = read_json(progress_path(sess_dir))
-        d["downloads"]["streaming"] = os.path.basename(streaming_wav)
         d["metrics"]["streaming"] = {
             "lufs_integrated": str_metrics["input_i"],
             "true_peak_db": str_metrics["input_tp"],
@@ -576,21 +779,26 @@ def run_pipeline(session: str, sess_dir: str, src_path: str, params: Dict[str, A
 
         # --- premaster ------------------------------------------------------
         current_target = "unlimited"
-        update_progress(sess_dir, pct=85, status="mastering", message="Preparing Unlimited Premaster…", masters={"unlimited": {"state": "rendering", "pct": 0, "message": "Rendering..."}})
+        update_progress(
+            sess_dir,
+            pct=85,
+            status="mastering",
+            message="Preparing Unlimited Premaster…",
+            masters={"unlimited": {"state": "rendering", "pct": 0, "message": "Rendering..."}},
+        )
         premaster_wav = os.path.join(sess_dir, "premaster_unlimited.wav")
         normalize_peak_to(src_path, premaster_wav, peak_dbfs=-6.0, sr=48000, bits=24)
         update_progress(sess_dir, masters={"unlimited": {"state": "finalizing", "pct": 99, "message": "Finalizing..."}})
         peak_out = measure_peak_dbfs(premaster_wav)
-        make_preview(Path(sess_dir) / "premaster_unlimited.wav", Path(sess_dir) / "premaster_unlimited_preview.wav", sr=48000, stereo=True)
+        make_preview(
+            Path(sess_dir) / "premaster_unlimited.wav",
+            Path(sess_dir) / "premaster_unlimited_preview.wav",
+            sr=48000,
+            stereo=True,
+        )
         info_out = ffprobe_info(premaster_wav)
-        sha, _ = add_output(manifest, "premaster_unlimited.wav", premaster_wav)
-        write_json_atomic(os.path.join(sess_dir, "premaster_unlimited_info.json"), info_out)
-        with open(os.path.join(sess_dir, "UnlimitedPremaster_24b_48k_INFO.txt"), "w", encoding="utf-8") as fh:
-            fh.write(f"Sample rate: {info_out['sr']}\nBits: 24\nPeak dBFS: {peak_out:.2f}\n")
-        add_output(manifest, "UnlimitedPremaster_24b_48k_INFO.txt", os.path.join(sess_dir, "UnlimitedPremaster_24b_48k_INFO.txt"))
-        add_output(manifest, "premaster_unlimited_info.json", os.path.join(sess_dir, "premaster_unlimited_info.json"))
+        sha = sha256_file(premaster_wav)
         d = read_json(progress_path(sess_dir))
-        d["downloads"]["unlimited"] = os.path.basename(premaster_wav)
         d["metrics"]["unlimited"] = {
             "lufs_integrated": None,
             "true_peak_db": None,
@@ -607,56 +815,8 @@ def run_pipeline(session: str, sess_dir: str, src_path: str, params: Dict[str, A
         else:
             update_progress(sess_dir, masters={"unlimited": {"state": "error", "pct": 100, "message": "Verify failed"}})
 
-        root = Path(sess_dir)
-
-        # --- package --------------------------------------------------------
-        current_target = None
-        update_progress(sess_dir, pct=95, status="finalizing", message="Packaging downloads…")
-        # build session json
-        d = read_json(progress_path(sess_dir))
-        session_json = {
-            "version": 1,
-            "time_utc": datetime.utcnow().isoformat() + "Z",
-            "preset_used": params.get("preset", ""),
-            "params": params,
-            "metrics": d["metrics"],
-            "timeline": d["timeline"],
-            "outputs": {
-                name: {
-                    "file": d["downloads"][name],
-                    "sha256": d["metrics"][name].get("sha256"),
-                    "sr": d["metrics"][name].get("sr"),
-                    "bits": d["metrics"][name].get("bits"),
-                }
-                for name in ("club", "streaming", "unlimited")
-            },
-            "ai_model": {"present": True, "adjustments": ai_adj, "fingerprint": fingerprint},
-        }
-        session_json_path = os.path.join(sess_dir, "session.json")
-        write_json_atomic(session_json_path, session_json)
-        d["downloads"]["session_json"] = os.path.basename(session_json_path)
-        write_json_atomic(progress_path(sess_dir), d)
-        add_output(manifest, "session.json", session_json_path)
-
-        # zip files
-        zip_path = os.path.join(sess_dir, "Masters_AND_INFO.zip")
-        with zipfile.ZipFile(zip_path, "w") as zf:
-            for name in [
-                "club_master.wav",
-                "stream_master.wav",
-                "premaster_unlimited.wav",
-                "ClubMaster_24b_48k_INFO.txt",
-                "StreamingMaster_24b_44k1_INFO.txt",
-                "UnlimitedPremaster_24b_48k_INFO.txt",
-            ]:
-                zf.write(os.path.join(sess_dir, name), name)
-        d = read_json(progress_path(sess_dir))
-        d["downloads"]["zip"] = os.path.basename(zip_path)
-        write_json_atomic(progress_path(sess_dir), d)
-        add_output(manifest, "Masters_AND_INFO.zip", zip_path)
-
         metrics_final = read_json(progress_path(sess_dir)).get("metrics", {})
-        finalize_session(sess_dir, metrics_final)
+        finalize_session(sess_dir, metrics_final, original_name, original_stem)
     except Exception as e:
         masters_err = {current_target: {"state": "error", "message": str(e)}} if current_target else None
         update_progress(sess_dir, status="error", message="Processing failed", error=str(e), done=True, masters=masters_err)

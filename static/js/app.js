@@ -28,13 +28,6 @@ window.PeakPilot = window.PeakPilot || {};
 window.PeakPilot.PlayerBus = window.PeakPilot.PlayerBus || { cur:null, claim(p){ if(this.cur && this.cur!==p) this.cur.pause?.(); this.cur=p; }, release(p){ if(this.cur===p) this.cur=null; } };
 const PlayerBus = window.PeakPilot.PlayerBus;
 
-// Canonical filenames by card id
-const FILES = {
-  club:      { wav: 'club_master.wav',          info: 'ClubMaster_24b_48k_INFO.txt',       preview: 'club_master_preview.wav' },
-  streaming: { wav: 'stream_master.wav',        info: 'StreamingMaster_24b_44k1_INFO.txt', preview: 'stream_master_preview.wav' },
-  unlimited: { wav: 'premaster_unlimited.wav',  info: 'UnlimitedPremaster_24b_48k_INFO.txt', preview: 'premaster_unlimited_preview.wav' },
-  original:  { wav: 'input_preview.wav' } // for A/B
-};
 
 const preview = document.getElementById('preview');
 const playBtn = document.getElementById('play');
@@ -207,56 +200,67 @@ async function poll(url, originalBlobUrl, session){
         if (window.renderUploadedAudioCanvas) {
           window.renderUploadedAudioCanvas(session);
         }
+        
         const s = window.PeakPilot.session;
+        const jData = j;
         const baseStream = `/stream/${s}/`;
         const baseDown   = `/download/${s}/`;
-        const metrics    = j?.metrics || {};
-        const ready      = !!j?.downloads_ready;
-
-        const streamURL = (name) => baseStream + encodeURIComponent(name);
-        const dlURL     = (name) => baseDown + encodeURIComponent(name);
-
-        const processedById = {
-          club:      streamURL(FILES.club.preview   || FILES.club.wav),
-          streaming: streamURL(FILES.streaming.preview || FILES.streaming.wav),
-          unlimited: streamURL(FILES.unlimited.preview || FILES.unlimited.wav),
-          original:  streamURL(FILES.original.wav)
+        const names = jData?.filenames || null;
+        if (!names) {
+          console.warn('Missing filenames in progress; cannot wire downloads safely.');
+        }
+        function streamURL(name){ return baseStream + encodeURIComponent(name); }
+        function dlURL(name){ return baseDown + encodeURIComponent(name); }
+        const previewUrls = {
+          original:  streamURL('input_preview.wav'),
+          club:      streamURL('club_master_preview.wav'),
+          streaming: streamURL('stream_master_preview.wav'),
+          unlimited: streamURL('premaster_unlimited_preview.wav'),
         };
+        const downloadsReady = !!jData?.downloads_ready;
+        const metrics = jData?.metrics || {};
 
         if (typeof renderMasteringResultsInHero === 'function') {
           renderMasteringResultsInHero(s, [
             {
               id: "club",
               title: "Club (48k/24, target −7.2 LUFS, −0.8 dBTP)",
-              processedUrl: processedById.club,
-              downloadWav:  ready ? dlURL(FILES.club.wav) : null,
-              downloadInfo: ready ? dlURL(FILES.club.info) : null,
+              processedUrl: previewUrls.club,
+              downloadWav:  downloadsReady && names ? dlURL(names.wav.club) : null,
+              downloadInfo: downloadsReady && names ? dlURL(names.info.club) : null,
               metrics: { input: metrics.input || {}, output: metrics.club || {} }
             },
             {
               id: "streaming",
               title: "Streaming (44.1k/24, target −9.5 LUFS, −1.0 dBTP)",
-              processedUrl: processedById.streaming,
-              downloadWav:  ready ? dlURL(FILES.streaming.wav) : null,
-              downloadInfo: ready ? dlURL(FILES.streaming.info) : null,
+              processedUrl: previewUrls.streaming,
+              downloadWav:  downloadsReady && names ? dlURL(names.wav.streaming) : null,
+              downloadInfo: downloadsReady && names ? dlURL(names.info.streaming) : null,
               metrics: { input: metrics.input || {}, output: metrics.streaming || {} }
             },
             {
               id: "unlimited",
               title: "Unlimited Premaster (48k/24, peak −6 dBFS)",
-              processedUrl: processedById.unlimited,
-              downloadWav:  ready ? dlURL(FILES.unlimited.wav) : null,
-              downloadInfo: ready ? dlURL(FILES.unlimited.info) : null,
+              processedUrl: previewUrls.unlimited,
+              downloadWav:  downloadsReady && names ? dlURL(names.wav.unlimited) : null,
+              downloadInfo: downloadsReady && names ? dlURL(names.info.unlimited) : null,
               metrics: { input: metrics.input || {}, output: metrics.unlimited || {} }
             }
           ], { showCustom: false });
           if (typeof updateMasterCardsProgress === 'function') {
-            updateMasterCardsProgress(j);
+            updateMasterCardsProgress(jData);
           }
         }
 
+        const processedById = {
+          club: previewUrls.club,
+          streaming: previewUrls.streaming,
+          unlimited: previewUrls.unlimited,
+          original: previewUrls.original,
+        };
+
         try {
-          const gains = setABGains(j);
+          const gains = setABGains(jData);
           abOrig?.addEventListener('click', () => loadIntoWave(processedById.original,  'Original (gain-matched)', gains.original));
           pvClub?.addEventListener('click', () => loadIntoWave(processedById.club,      'Club (gain-matched)',     gains.club));
           pvStreaming?.addEventListener('click', () => loadIntoWave(processedById.streaming,'Streaming (gain-matched)', gains.streaming));
@@ -266,7 +270,7 @@ async function poll(url, originalBlobUrl, session){
           const pv = processedById.original;
           fetch(pv).then(r=>r.arrayBuffer()).then(ab=> window.PeakPilot.getAC().decodeAudioData(ab)).then(buf=> window.drawPeakHighlightsOnOriginal(loudCanvas, buf, -1.0)).catch(()=>{});
         }
-        const preTech = document.getElementById('preTech');
+const preTech = document.getElementById('preTech');
         if(preTech){
           const adv = j.metrics?.advisor || {};
           if(adv.input_I!=null){
