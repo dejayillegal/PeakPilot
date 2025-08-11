@@ -211,19 +211,26 @@
 
   function metricsTable(cfg){
     const m = cfg.metrics || {};
-    const wrap = document.createElement('div'); wrap.className = 'pp-metrics';
-    function fmtNum(v){ return (v === null || v === undefined) ? '—' : Number(v).toFixed(2); }
-    function row(label,a,b){ return `<div class="mrow"><span>${label}</span><span>${fmtNum(a)}</span><span>${fmtNum(b)}</span></div>`; }
-    let html = '<div class="mrow"><span></span><span>Input</span><span>Output</span></div>';
     if (cfg.id === 'unlimited') {
-      html += row('Peak dBFS', m.input?.peak_dbfs, m.output?.peak_dbfs);
-    } else {
-      html += row('LUFS‑I', m.input?.lufs_integrated, m.output?.lufs_integrated);
-      html += row('TP (dBTP)', m.input?.true_peak_db, m.output?.true_peak_db);
-      html += row('LRA (LU)', m.input?.lra, m.output?.lra);
+      return rows([[
+        'Peak dBFS',
+        fmt(m.input?.peak_dbfs),
+        fmt(m.output?.peak_dbfs)
+      ]]);
     }
-    wrap.innerHTML = html;
-    return wrap;
+    return rows([
+      ['LUFS-I',  fmt(m.input?.lufs_integrated), fmt(m.output?.lufs_integrated)],
+      ['TP (dBTP)', fmt(m.input?.true_peak_db),  fmt(m.output?.true_peak_db)],
+      ['LRA (LU)', fmt(m.input?.lra),            fmt(m.output?.lra)],
+    ]);
+
+    function fmt(v){ return v==null ? '—' : Number(v).toFixed(2); }
+    function rows(r){
+      const wrap = document.createElement('div'); wrap.className = 'pp-metrics';
+      const head = '<div class="mrow"><span></span><span>Input</span><span>Output</span></div>';
+      wrap.innerHTML = head + r.map(([k,a,b]) => `<div class="mrow"><span>${k}</span><span>${a}</span><span>${b}</span></div>`).join('');
+      return wrap;
+    }
   }
 
   function buildCard(session, cfg) {
@@ -247,8 +254,18 @@
     art.appendChild(metricsTable(cfg));
 
     const downloads = document.createElement('div'); downloads.className = 'pp-downloads';
-    const wav = document.createElement('a'); wav.className = 'pp-dl'; wav.href = `/download/${session}/${encodeURIComponent(cfg.wavKey)}`; wav.appendChild(iconDownload()); wav.appendChild(document.createTextNode(' Download WAV'));
-    const info = document.createElement('a'); info.className = 'pp-dl'; info.href = `/download/${session}/${encodeURIComponent(cfg.infoKey)}`; info.appendChild(iconDownload()); info.appendChild(document.createTextNode(' Download INFO'));
+    const wav = document.createElement('a'); wav.className = 'pp-dl'; wav.appendChild(iconDownload()); wav.appendChild(document.createTextNode(' Download WAV'));
+    const info = document.createElement('a'); info.className = 'pp-dl'; info.appendChild(iconDownload()); info.appendChild(document.createTextNode(' Download INFO'));
+    if (cfg.downloadWav) {
+      wav.href = cfg.downloadWav;
+    } else {
+      wav.setAttribute('aria-disabled','true');
+    }
+    if (cfg.downloadInfo) {
+      info.href = cfg.downloadInfo;
+    } else {
+      info.setAttribute('aria-disabled','true');
+    }
     downloads.appendChild(wav); downloads.appendChild(info); art.appendChild(downloads);
 
     new WaveformPlayer(btn, canvas, cfg.processedUrl);

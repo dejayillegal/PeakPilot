@@ -1,6 +1,6 @@
 from flask import Blueprint, current_app, request, abort, Response
 from pathlib import Path
-import os
+import os, json
 
 from app.util_fs import session_root
 
@@ -27,10 +27,29 @@ def _open_range(path: Path, range_header: str):
 @bp.get("/stream/<session>/<key>")
 def stream(session, key):
     root = session_root(current_app.config["UPLOAD_FOLDER"], session)
-    p = root / key
-    if not p.exists() or p.is_dir():
+    man_path = root / "manifest.json"
+    chosen: Path | None = None
+
+    if man_path.exists():
+        try:
+            manifest = json.loads(man_path.read_text())
+        except Exception:
+            manifest = {}
+        if key in manifest:
+            chosen = root / manifest[key].get("filename", "")
+        else:
+            for entry in manifest.values():
+                if entry.get("filename") == key:
+                    chosen = root / entry.get("filename", "")
+                    break
+
+    if chosen is None:
+        chosen = root / key
+
+    if not chosen.exists() or chosen.is_dir():
         abort(404)
-    code, chunk, start, end, size = _open_range(p, request.headers.get("Range"))
+
+    code, chunk, start, end, size = _open_range(chosen, request.headers.get("Range"))
     headers = {
         "Accept-Ranges": "bytes",
         "Content-Type": "audio/wav",
