@@ -10,7 +10,6 @@ from datetime import datetime
 import time
 import zipfile
 from .ai_module import analyze_track
-from .util_fs import write_manifest
 
 import numpy as np
 import soundfile as sf
@@ -210,54 +209,80 @@ def add_output(manifest: dict, key: str, filename_path: str | Path) -> Tuple[str
     return sha, size
 
 
-def finalize_session(sess_dir, metrics):
-    """Finalize a mastering session by normalizing previews and writing metadata."""
-    sess = Path(sess_dir)
+def rename_previews(sess: Path):
+    pairs = [
+        ("input_preview.tmp.wav", "input_preview.wav"),
+        ("club_master_preview.tmp.wav", "club_master_preview.wav"),
+        ("stream_master_preview.tmp.wav", "stream_master_preview.wav"),
+        ("premaster_unlimited_preview.tmp.wav", "premaster_unlimited_preview.wav"),
+    ]
+    for a, b in pairs:
+        src, dst = sess / a, sess / b
+        if src.exists():
+            src.replace(dst)
 
-    # 1) Normalize preview filenames (remove .tmp suffix if present)
-    for base in [
-        "input_preview",
-        "club_master_preview",
-        "stream_master_preview",
-        "premaster_unlimited_preview",
-    ]:
-        tmp = sess / f"{base}.tmp.wav"
-        out = sess / f"{base}.wav"
-        if tmp.exists():
-            tmp.replace(out)
 
-    # 2) Build manifest for masters and input preview
-    manifest: dict[str, dict[str, object]] = {}
-
-    def add_output_entry(key: str, filename: str):
+def write_manifest(sess: Path, files: dict):
+    manifest = {}
+    for key, filename in files.items():
         p = sess / filename
-        sha = sha256_file(p)
-        manifest[key] = {
+        if not p.exists():
+            continue
+        manifest[filename] = {
             "filename": filename,
-            "sha256": sha,
+            "sha256": sha256_file(p),
             "bytes": p.stat().st_size,
         }
-
-    add_output_entry("club", CANON["club"])
-    add_output_entry("streaming", CANON["streaming"])
-    add_output_entry("unlimited", CANON["unlimited"])
-    add_output_entry("original_preview", CANON["original_preview"])
-
     (sess / "manifest.json").write_text(json.dumps(manifest, indent=2))
 
-    # 3) Persist progress with metrics and mark stage done
-    progress = {
-        "stage": "done",
-        "downloads_ready": True,
-        "metrics": {
-            "input": metrics.get("input", {}),
-            "club": metrics.get("club", {}),
-            "streaming": metrics.get("streaming", {}),
-            "unlimited": metrics.get("unlimited", {}),
+
+def finalize_session(sess_dir: str, metrics: dict):
+    sess = Path(sess_dir)
+    rename_previews(sess)
+
+    write_manifest(
+        sess,
+        {
+            "club": CANON["club"],
+            "streaming": CANON["streaming"],
+            "unlimited": CANON["unlimited"],
+            "original_preview": CANON["original_preview"],
+            "info_club": "ClubMaster_24b_48k_INFO.txt",
+            "info_streaming": "StreamingMaster_24b_44k1_INFO.txt",
+            "info_unlimited": "UnlimitedPremaster_24b_48k_INFO.txt",
+            "zip": "Masters_AND_INFO.zip",
         },
-        "ts": int(time.time()),
-    }
-    (sess / "progress.json").write_text(json.dumps(progress, indent=2))
+    )
+
+    pj = {}
+    pj_path = sess / "progress.json"
+    if pj_path.exists():
+        try:
+            pj = json.loads(pj_path.read_text())
+        except Exception:
+            pj = {}
+
+    pj.update(
+        {
+            "done": True,
+            "percent": 100,
+            "stage": "done",
+            "downloads_ready": True,
+            "masters": {
+                "club": {"state": "done", "pct": 100, "message": "Ready"},
+                "streaming": {"state": "done", "pct": 100, "message": "Ready"},
+                "unlimited": {"state": "done", "pct": 100, "message": "Ready"},
+            },
+            "metrics": {
+                "input": metrics.get("input", {}),
+                "club": metrics.get("club", {}),
+                "streaming": metrics.get("streaming", {}),
+                "unlimited": metrics.get("unlimited", {}),
+            },
+            "ts": int(time.time()),
+        }
+    )
+    pj_path.write_text(json.dumps(pj, indent=2))
 
 
 def _read_mono(path: str):
@@ -647,11 +672,8 @@ def run_pipeline(session: str, sess_dir: str, src_path: str, params: Dict[str, A
         write_json_atomic(progress_path(sess_dir), d)
         add_output(manifest, "Masters_AND_INFO.zip", zip_path)
 
-        # Persist manifest with checksums/sizes for /download integrity
-        write_manifest(root, manifest)
-
-        # --- done -----------------------------------------------------------
-        update_progress(sess_dir, pct=100, status="done", message="Ready", done=True, error=None)
+        metrics_final = read_json(progress_path(sess_dir)).get("metrics", {})
+        finalize_session(sess_dir, metrics_final)
     except Exception as e:
         masters_err = {current_target: {"state": "error", "message": str(e)}} if current_target else None
         update_progress(sess_dir, status="error", message="Processing failed", error=str(e), done=True, masters=masters_err)

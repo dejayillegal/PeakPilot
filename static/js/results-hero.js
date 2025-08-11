@@ -363,19 +363,22 @@
 
   // Polling hook: update per-master progress & activate when done
   window.updateMasterCardsProgress = function(progress){
-    const m=progress?.masters||{};
+    const m = progress?.masters || {};
+    const metrics = progress?.metrics || {};
     if (m.streaming && !m.stream)   m.stream   = m.streaming;
     if (m.premaster && !m.unlimited) m.unlimited = m.premaster;
     if (m.premaster_unlimited && !m.unlimited) m.unlimited = m.premaster_unlimited;
-    for(const id of MasterCards.keys()){
-      const card=MasterCards.get(id); if(!card) continue;
-      const st=m[id]; if(!st) continue;
+    for(const [id, card] of MasterCards){
+      const st = m[id]; if(!st) continue;
       card.pill.dataset.state=st.state||'queued';
       card.pill.textContent = st.state==='rendering' ? `Rendering… ${st.pct|0}%`
                             : st.state==='finalizing' ? 'Finalizing…'
                             : st.state==='done' ? 'Ready'
                             : st.state==='error' ? 'Error'
                             : 'Queued';
+
+      const cfg = { id, metrics: { input: metrics.input || {}, output: metrics[id] || {} } };
+      renderMetricsTable(card.el, cfg);
 
       if(st.state==='done' && !card.ready){
         const baseDl=`/download/${window.PeakPilot.session}/`;
