@@ -267,7 +267,11 @@
       info.setAttribute('aria-disabled','true');
     }
     downloads.appendChild(wav); downloads.appendChild(info); art.appendChild(downloads);
-
+    function showPreviewUnavailable(){
+      canvas.parentElement.textContent = 'Preview unavailable';
+      btn.disabled = true;
+    }
+    if (!cfg.processedUrl) { showPreviewUnavailable(); return art; }
     new WaveformPlayer(btn, canvas, cfg.processedUrl);
     return art;
   }

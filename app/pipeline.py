@@ -238,6 +238,7 @@ def write_manifest(sess: Path, files: dict):
 
 def finalize_session(sess_dir: str, metrics: dict):
     sess = Path(sess_dir)
+    # normalize preview filenames so the HEAD test can succeed
     rename_previews(sess)
 
     write_manifest(

@@ -15,6 +15,23 @@
 
   const previewFromDownload = (url) => url.replace("/download/","/stream/").replace(/([^/]+)\.wav$/,"$1_preview.wav");
 
+  function setDownloadLink(anchor, url){
+    if(!anchor) return;
+    if(url){
+      anchor.href=url;
+      anchor.setAttribute('download','');
+      anchor.removeAttribute('aria-disabled');
+      anchor.classList.remove('is-disabled');
+      anchor.removeAttribute('tabindex');
+    }else{
+      anchor.removeAttribute('href');
+      anchor.removeAttribute('download');
+      anchor.setAttribute('aria-disabled','true');
+      anchor.classList.add('is-disabled');
+      anchor.setAttribute('tabindex','-1');
+    }
+  }
+
   // ---------- DRAW HELPERS ----------
   function drawWave(ctx, buffer, W, H){
     const ch=Math.min(2,buffer.numberOfChannels), L=buffer.getChannelData(0), R=ch>1?buffer.getChannelData(1):null;
@@ -316,7 +333,7 @@
       pill: art.querySelector('.pp-statepill'),
       linkWav: art.querySelector('.pp-dl[data-key="wav"]'),
       linkInfo: art.querySelector('.pp-dl[data-key="info"]'),
-      wavKey, infoKey, ready:false, player:null
+      wavKey, infoKey, procUrl:null, ready:false, player:null
     });
     return art;
   }
@@ -357,6 +374,10 @@
       const art=buildCard({ id:c.id, title:c.title, wavKey:c.wavKey, infoKey:c.infoKey });
       renderMetricsTable(art, c);
       mount.appendChild(art);
+      const card=MasterCards.get(c.id);
+      card.procUrl = c.processedUrl || null;
+      setDownloadLink(card.linkWav, c.downloadWav);
+      setDownloadLink(card.linkInfo, c.downloadInfo);
     }
     wireDownloadShield(mount);
   };
@@ -383,22 +404,28 @@
       if(st.state==='done' && !card.ready){
         const baseDl=`/download/${window.PeakPilot.session}/`;
         const dlUrl= baseDl+encodeURIComponent(card.wavKey);
-        const pvUrl= previewFromDownload(dlUrl);
-        card.linkWav.href= dlUrl;
-        card.linkInfo.href=baseDl+encodeURIComponent(card.infoKey);
-        card.linkWav.removeAttribute('aria-disabled'); card.linkInfo.removeAttribute('aria-disabled');
-        card.linkWav.removeAttribute('tabindex');      card.linkInfo.removeAttribute('tabindex');
+        setDownloadLink(card.linkWav, dlUrl);
+        setDownloadLink(card.linkInfo, baseDl+encodeURIComponent(card.infoKey));
         card.btn.removeAttribute('disabled');
 
-        const player = new TrackPlayer({
-          button: card.btn,
-          waveCanvas: card.wave,
-          ribbonCanvas: card.ribbon,
-          specCanvas: card.spec,
-          url: pvUrl,
-          onDrawOverlay: (pl)=> pl._drawTPHot()
-        });
-        card.player=player; card.ready=true;
+        const playUrl = card.procUrl;
+        if(!playUrl){
+          card.wave.replaceWith(document.createTextNode("Preview unavailable"));
+          if(card.ribbon) card.ribbon.replaceWith(document.createTextNode(""));
+          if(card.spec)   card.spec.replaceWith(document.createTextNode(""));
+          card.btn.setAttribute('disabled','disabled');
+          card.ready=true;
+        }else{
+          const player = new TrackPlayer({
+            button: card.btn,
+            waveCanvas: card.wave,
+            ribbonCanvas: card.ribbon,
+            specCanvas: card.spec,
+            url: playUrl,
+            onDrawOverlay: (pl)=> pl._drawTPHot()
+          });
+          card.player=player; card.ready=true;
+        }
       }
     }
     (async () => {
@@ -408,20 +435,18 @@
         if (card.ready) continue;
         const base = `/download/${s}/`;
         const dlUrl  = base + encodeURIComponent(card.wavKey);
-        const pvUrl  = previewFromDownload(dlUrl);
         try {
-          const r = await fetch(dlUrl, { method:"GET", cache:"no-store" });
+          const r = await fetch(dlUrl, { method:"HEAD", cache:"no-store" });
           if (r.ok) {
-            card.linkWav.href = dlUrl;
-            card.linkInfo.href = base + encodeURIComponent(card.infoKey);
-            card.linkWav.removeAttribute('aria-disabled');
-            card.linkInfo.removeAttribute('aria-disabled');
-            card.linkWav.removeAttribute('tabindex');
-            card.linkInfo.removeAttribute('tabindex');
+            setDownloadLink(card.linkWav, dlUrl);
+            setDownloadLink(card.linkInfo, base + encodeURIComponent(card.infoKey));
             card.btn.removeAttribute('disabled');
-            const player = new TrackPlayer({ button:card.btn, waveCanvas:card.wave, ribbonCanvas:card.ribbon, specCanvas:card.spec, url: pvUrl, onDrawOverlay:(pl)=>pl._drawTPHot() });
-            card.player = player; card.ready = true;
-            console.warn(`[PP] Enabled ${id} via file presence (progress missing)`);
+            const playUrl = card.procUrl || previewFromDownload(dlUrl);
+            if(playUrl){
+              const player = new TrackPlayer({ button:card.btn, waveCanvas:card.wave, ribbonCanvas:card.ribbon, specCanvas:card.spec, url: playUrl, onDrawOverlay:(pl)=>pl._drawTPHot() });
+              card.player = player; card.ready = true;
+              console.warn(`[PP] Enabled ${id} via file presence (progress missing)`);
+            }
           }
         } catch {}
       }

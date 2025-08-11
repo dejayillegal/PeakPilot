@@ -1,4 +1,4 @@
-from flask import Blueprint, current_app, request, abort, Response
+from flask import Blueprint, current_app, request, Response, abort
 from pathlib import Path
 import os, json
 from werkzeug.utils import secure_filename
@@ -25,7 +25,7 @@ def _open_range(path: Path, range_header: str):
     return 206, f.read(length), start, end, size
 
 
-@bp.get("/stream/<session>/<key>")
+@bp.route("/stream/<session>/<key>", methods=["GET","HEAD"])
 def stream(session, key):
     root = session_root(current_app.config["UPLOAD_FOLDER"], secure_filename(session))
     man_path = root / "manifest.json"
@@ -43,7 +43,10 @@ def stream(session, key):
                 path = root / meta["filename"]
                 break
     if not path.exists() or path.is_dir():
-        abort(404)
+        return ("Not found", 404) if request.method == "HEAD" else abort(404)
+
+    if request.method == "HEAD":
+        return ("", 200)
 
     code, chunk, start, end, size = _open_range(path, request.headers.get("Range"))
     headers = {
