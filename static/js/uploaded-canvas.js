@@ -63,7 +63,7 @@
 
   // Public API: render uploaded audio in the canvases area
   window.renderUploadedAudioCanvas = function(session){
-    const host = document.querySelector('.canvases[part="canvases"]');
+    const host = document.getElementById('masterCanvases');
     if(!host) return;
     const mount = document.createElement("div");
     host.innerHTML=""; host.appendChild(mount);

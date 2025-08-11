@@ -28,6 +28,14 @@ window.PeakPilot = window.PeakPilot || {};
 window.PeakPilot.PlayerBus = window.PeakPilot.PlayerBus || { cur:null, claim(p){ if(this.cur && this.cur!==p) this.cur.pause?.(); this.cur=p; }, release(p){ if(this.cur===p) this.cur=null; } };
 const PlayerBus = window.PeakPilot.PlayerBus;
 
+// Canonical filenames by card id
+const FILES = {
+  club:      { wav: 'club_master.wav',          info: 'ClubMaster_24b_48k_INFO.txt',       preview: 'club_master_preview.wav' },
+  streaming: { wav: 'stream_master.wav',        info: 'StreamingMaster_24b_44k1_INFO.txt', preview: 'stream_master_preview.wav' },
+  unlimited: { wav: 'premaster_unlimited.wav',  info: 'UnlimitedPremaster_24b_48k_INFO.txt', preview: 'premaster_unlimited_preview.wav' },
+  original:  { wav: 'input_preview.wav' } // for A/B
+};
+
 const preview = document.getElementById('preview');
 const playBtn = document.getElementById('play');
 const curEl = document.getElementById('cur');
@@ -200,67 +208,45 @@ async function poll(url, originalBlobUrl, session){
           window.renderUploadedAudioCanvas(session);
         }
         const s = window.PeakPilot.session;
-        async function firstPlayable(urls){
-          for(const u of urls){
-            try{
-              const r=await fetch(u,{method:'HEAD'});
-              if(r.ok) return u;
-            }catch{}
-          }
-          return null;
-        }
         const baseStream = `/stream/${s}/`;
         const baseDown   = `/download/${s}/`;
-        const urls = {
-          club: [
-            baseStream + 'club_master_preview.wav',
-            baseStream + 'club_master.wav'
-          ],
-          streaming: [
-            baseStream + 'stream_master_preview.wav',
-            baseStream + 'stream_master.wav'
-          ],
-          unlimited: [
-            baseStream + 'premaster_unlimited_preview.wav',
-            baseStream + 'premaster_unlimited.wav'
-          ],
-          original: [
-            baseStream + 'input_preview.wav'
-          ]
+        const metrics    = j?.metrics || {};
+        const ready      = !!j?.downloads_ready;
+
+        const streamURL = (name) => baseStream + encodeURIComponent(name);
+        const dlURL     = (name) => baseDown + encodeURIComponent(name);
+
+        const processedById = {
+          club:      streamURL(FILES.club.preview   || FILES.club.wav),
+          streaming: streamURL(FILES.streaming.preview || FILES.streaming.wav),
+          unlimited: streamURL(FILES.unlimited.preview || FILES.unlimited.wav),
+          original:  streamURL(FILES.original.wav)
         };
 
-        const playable = {
-          club:      await firstPlayable(urls.club),
-          streaming: await firstPlayable(urls.streaming),
-          unlimited: await firstPlayable(urls.unlimited),
-          original:  await firstPlayable(urls.original),
-        };
-        const metrics = j?.metrics || {};
-        const ready   = !!j?.downloads_ready;
         if (typeof renderMasteringResultsInHero === 'function') {
           renderMasteringResultsInHero(s, [
             {
               id: "club",
               title: "Club (48k/24, target −7.2 LUFS, −0.8 dBTP)",
-              processedUrl: playable.club,
-              downloadWav:  ready ? baseDown + 'club_master.wav' : null,
-              downloadInfo: ready ? baseDown + 'ClubMaster_24b_48k_INFO.txt' : null,
+              processedUrl: processedById.club,
+              downloadWav:  ready ? dlURL(FILES.club.wav) : null,
+              downloadInfo: ready ? dlURL(FILES.club.info) : null,
               metrics: { input: metrics.input || {}, output: metrics.club || {} }
             },
             {
               id: "streaming",
               title: "Streaming (44.1k/24, target −9.5 LUFS, −1.0 dBTP)",
-              processedUrl: playable.streaming,
-              downloadWav:  ready ? baseDown + 'stream_master.wav' : null,
-              downloadInfo: ready ? baseDown + 'StreamingMaster_24b_44k1_INFO.txt' : null,
+              processedUrl: processedById.streaming,
+              downloadWav:  ready ? dlURL(FILES.streaming.wav) : null,
+              downloadInfo: ready ? dlURL(FILES.streaming.info) : null,
               metrics: { input: metrics.input || {}, output: metrics.streaming || {} }
             },
             {
               id: "unlimited",
               title: "Unlimited Premaster (48k/24, peak −6 dBFS)",
-              processedUrl: playable.unlimited,
-              downloadWav:  ready ? baseDown + 'premaster_unlimited.wav' : null,
-              downloadInfo: ready ? baseDown + 'UnlimitedPremaster_24b_48k_INFO.txt' : null,
+              processedUrl: processedById.unlimited,
+              downloadWav:  ready ? dlURL(FILES.unlimited.wav) : null,
+              downloadInfo: ready ? dlURL(FILES.unlimited.info) : null,
               metrics: { input: metrics.input || {}, output: metrics.unlimited || {} }
             }
           ], { showCustom: false });
@@ -268,15 +254,16 @@ async function poll(url, originalBlobUrl, session){
             updateMasterCardsProgress(j);
           }
         }
+
         try {
           const gains = setABGains(j);
-          abOrig?.addEventListener('click', () => loadIntoWave(playable.original,  'Original (gain-matched)', gains.original));
-          pvClub?.addEventListener('click', () => loadIntoWave(playable.club,      'Club (gain-matched)',     gains.club));
-          pvStreaming?.addEventListener('click', () => loadIntoWave(playable.streaming,'Streaming (gain-matched)', gains.streaming));
-          pvPremaster?.addEventListener('click', () => loadIntoWave(playable.unlimited,'Unlimited (gain-matched)', gains.premaster));
+          abOrig?.addEventListener('click', () => loadIntoWave(processedById.original,  'Original (gain-matched)', gains.original));
+          pvClub?.addEventListener('click', () => loadIntoWave(processedById.club,      'Club (gain-matched)',     gains.club));
+          pvStreaming?.addEventListener('click', () => loadIntoWave(processedById.streaming,'Streaming (gain-matched)', gains.streaming));
+          pvPremaster?.addEventListener('click', () => loadIntoWave(processedById.unlimited,'Unlimited (gain-matched)', gains.premaster));
         } catch {}
         if (window.drawPeakHighlightsOnOriginal){
-          const pv = playable.original;
+          const pv = processedById.original;
           fetch(pv).then(r=>r.arrayBuffer()).then(ab=> window.PeakPilot.getAC().decodeAudioData(ab)).then(buf=> window.drawPeakHighlightsOnOriginal(loudCanvas, buf, -1.0)).catch(()=>{});
         }
         const preTech = document.getElementById('preTech');
