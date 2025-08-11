@@ -7,12 +7,21 @@ import signal
 from typing import Dict, Any, Tuple
 from pathlib import Path
 from datetime import datetime
+import time
 import zipfile
 from .ai_module import analyze_track
 from .util_fs import write_manifest
 
 import numpy as np
 import soundfile as sf
+
+
+CANON = {
+    "original_preview": "input_preview.wav",
+    "club": "club_master.wav",
+    "streaming": "stream_master.wav",
+    "unlimited": "premaster_unlimited.wav",
+}
 
 
 def ffprobe_ok(tool: str) -> bool:
@@ -161,6 +170,17 @@ def checksum_sha256(path: str) -> str:
     return h.hexdigest()
 
 
+def sha256_file(path: str | Path) -> str:
+    """Return the sha256 hex digest for ``path``."""
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def sha256_and_size(path: str | Path) -> Tuple[str, int]:
     """Return ``(sha256, size)`` for ``path``."""
     h = hashlib.sha256()
@@ -188,6 +208,56 @@ def add_output(manifest: dict, key: str, filename_path: str | Path) -> Tuple[str
         "bytes": size,
     }
     return sha, size
+
+
+def finalize_session(sess_dir, metrics):
+    """Finalize a mastering session by normalizing previews and writing metadata."""
+    sess = Path(sess_dir)
+
+    # 1) Normalize preview filenames (remove .tmp suffix if present)
+    for base in [
+        "input_preview",
+        "club_master_preview",
+        "stream_master_preview",
+        "premaster_unlimited_preview",
+    ]:
+        tmp = sess / f"{base}.tmp.wav"
+        out = sess / f"{base}.wav"
+        if tmp.exists():
+            tmp.replace(out)
+
+    # 2) Build manifest for masters and input preview
+    manifest: dict[str, dict[str, object]] = {}
+
+    def add_output_entry(key: str, filename: str):
+        p = sess / filename
+        sha = sha256_file(p)
+        manifest[key] = {
+            "filename": filename,
+            "sha256": sha,
+            "bytes": p.stat().st_size,
+        }
+
+    add_output_entry("club", CANON["club"])
+    add_output_entry("streaming", CANON["streaming"])
+    add_output_entry("unlimited", CANON["unlimited"])
+    add_output_entry("original_preview", CANON["original_preview"])
+
+    (sess / "manifest.json").write_text(json.dumps(manifest, indent=2))
+
+    # 3) Persist progress with metrics and mark stage done
+    progress = {
+        "stage": "done",
+        "downloads_ready": True,
+        "metrics": {
+            "input": metrics.get("input", {}),
+            "club": metrics.get("club", {}),
+            "streaming": metrics.get("streaming", {}),
+            "unlimited": metrics.get("unlimited", {}),
+        },
+        "ts": int(time.time()),
+    }
+    (sess / "progress.json").write_text(json.dumps(progress, indent=2))
 
 
 def _read_mono(path: str):
@@ -596,6 +666,7 @@ __all__ = [
     "read_json",
     "update_progress",
     "checksum_sha256",
+    "sha256_file",
     "ffprobe_info",
     "validate_upload",
     "measure_loudnorm_json",
@@ -604,6 +675,7 @@ __all__ = [
     "loudnorm_two_pass",
     "normalize_peak_to",
     "make_preview",
+    "finalize_session",
     "run_pipeline",
 ]
 

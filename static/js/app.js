@@ -200,50 +200,53 @@ async function poll(url, originalBlobUrl, session){
           window.renderUploadedAudioCanvas(session);
         }
         const s = window.PeakPilot.session;
+        const baseStream = `/stream/${s}/`;
+        const baseDown   = `/download/${s}/`;
+        const previews = {
+          club:      baseStream + encodeURIComponent('club_master_preview.wav'),
+          streaming: baseStream + encodeURIComponent('stream_master_preview.wav'),
+          unlimited: baseStream + encodeURIComponent('premaster_unlimited_preview.wav'),
+          original:  baseStream + encodeURIComponent('input_preview.wav'),
+        };
+        const metrics = j?.metrics || {};
+        const ready   = !!j?.downloads_ready;
         if (typeof renderMasteringResultsInHero === 'function') {
-          const base = `/stream/${s}/`;
-          const jm = j?.metrics || {};
           renderMasteringResultsInHero(s, [
             {
               id: "club",
               title: "Club (48k/24, target −7.2 LUFS, −0.8 dBTP)",
-              wavKey: "club_master.wav",
-              infoKey: "ClubMaster_24b_48k_INFO.txt",
-              processedUrl: base + encodeURIComponent("club_master.wav"),
-              metrics: { input: jm.input || {}, output: jm.club || {} }
+              processedUrl: previews.club,
+              downloadWav:  ready ? baseDown + encodeURIComponent('club_master.wav') : null,
+              downloadInfo: ready ? baseDown + encodeURIComponent('ClubMaster_24b_48k_INFO.txt') : null,
+              metrics: { input: metrics.input || {}, output: metrics.club || {} }
             },
             {
               id: "streaming",
               title: "Streaming (44.1k/24, target −9.5 LUFS, −1.0 dBTP)",
-              wavKey: "stream_master.wav",
-              infoKey: "StreamingMaster_24b_44k1_INFO.txt",
-              processedUrl: base + encodeURIComponent("stream_master.wav"),
-              metrics: { input: jm.input || {}, output: jm.streaming || {} }
+              processedUrl: previews.streaming,
+              downloadWav:  ready ? baseDown + encodeURIComponent('stream_master.wav') : null,
+              downloadInfo: ready ? baseDown + encodeURIComponent('StreamingMaster_24b_44k1_INFO.txt') : null,
+              metrics: { input: metrics.input || {}, output: metrics.streaming || {} }
             },
             {
               id: "unlimited",
               title: "Unlimited Premaster (48k/24, peak −6 dBFS)",
-              wavKey: "premaster_unlimited.wav",
-              infoKey: "UnlimitedPremaster_24b_48k_INFO.txt",
-              processedUrl: base + encodeURIComponent("premaster_unlimited.wav"),
-              metrics: { input: jm.input || {}, output: jm.unlimited || {} }
+              processedUrl: previews.unlimited,
+              downloadWav:  ready ? baseDown + encodeURIComponent('premaster_unlimited.wav') : null,
+              downloadInfo: ready ? baseDown + encodeURIComponent('UnlimitedPremaster_24b_48k_INFO.txt') : null,
+              metrics: { input: metrics.input || {}, output: metrics.unlimited || {} }
             }
           ], { showCustom: false });
         }
         try {
           const gains = setABGains(j);
-          const base = `/stream/${s}/`;
-          abOrig?.addEventListener('click', () =>
-            loadIntoWave(base + encodeURIComponent('input_preview.wav'), 'Original (gain-matched)', gains.original));
-          pvClub?.addEventListener('click', () =>
-            loadIntoWave(base + encodeURIComponent('club_master.wav'), 'Club (gain-matched)', gains.club));
-          pvStreaming?.addEventListener('click', () =>
-            loadIntoWave(base + encodeURIComponent('stream_master.wav'), 'Streaming (gain-matched)', gains.streaming));
-          pvPremaster?.addEventListener('click', () =>
-            loadIntoWave(base + encodeURIComponent('premaster_unlimited.wav'), 'Unlimited (gain-matched)', gains.premaster));
+          abOrig?.addEventListener('click', () => loadIntoWave(previews.original,  'Original (gain-matched)', gains.original));
+          pvClub?.addEventListener('click', () => loadIntoWave(previews.club,      'Club (gain-matched)',     gains.club));
+          pvStreaming?.addEventListener('click', () => loadIntoWave(previews.streaming,'Streaming (gain-matched)', gains.streaming));
+          pvPremaster?.addEventListener('click', () => loadIntoWave(previews.unlimited,'Unlimited (gain-matched)', gains.premaster));
         } catch {}
         if (window.drawPeakHighlightsOnOriginal){
-          const pv = `/stream/${s}/` + encodeURIComponent("input_preview.wav");
+          const pv = previews.original;
           fetch(pv).then(r=>r.arrayBuffer()).then(ab=> window.PeakPilot.getAC().decodeAudioData(ab)).then(buf=> window.drawPeakHighlightsOnOriginal(loudCanvas, buf, -1.0)).catch(()=>{});
         }
         const preTech = document.getElementById('preTech');
